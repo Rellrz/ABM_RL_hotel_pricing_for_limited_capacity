@@ -1,79 +1,132 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
-"""兼容入口：保留旧导入路径 `configs.config`，实际实现已拆分到子模块。"""
+from __future__ import annotations
 
-from .base import DATA_PATH, PROJECT_ROOT
-from .defaults import ABM_PERTURBATION_TEMPLATES, apply_abm_perturbation_template
-from .estimators import (
-    build_empirical_lead_time_distribution,
-    calculate_monthly_arrival_rates,
-    create_abm_config,
-    fit_lead_time_distribution,
-    fit_wtp_distribution,
-)
-from .loader import load_runtime_configs
-from .schema import (
-    ABMConfig,
-    EnvConfig,
-    LogConfig,
-    PathConfig,
-    RLConfig,
-    RandomConfig,
-    SimulationConfig,
-    SystemConfig,
-)
-from .validators import validate_config as _validate_config
+from dataclasses import dataclass, field
+from pathlib import Path
+
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+
+
+@dataclass
+class PathConfig:
+    project_root: Path = PROJECT_ROOT
+    data_path: Path = PROJECT_ROOT / "datasets" / "hotel_bookings.csv"
+    output_root: Path = PROJECT_ROOT / "outputs"
+    model_dir: Path = PROJECT_ROOT / "outputs" / "models"
+    tensorboard_dir: Path = PROJECT_ROOT / "outputs" / "tensorboard"
+    log_dir: Path = PROJECT_ROOT / "outputs" / "logs"
+
+    def ensure_dirs(self) -> None:
+        for path in (self.output_root, self.model_dir, self.tensorboard_dir, self.log_dir):
+            path.mkdir(parents=True, exist_ok=True)
+
+
+@dataclass
+class DataConfig:
+    hotel_name: str = "City Hotel"
+    max_lead_time: int = 2
+    adr_column: str = "adr"
+    seed: int = 42
+
+
+@dataclass
+class ABMConfig:
+    window_size: int = 3
+    wtp_min: float = 30.0
+    utility_noise_std: float = 8.0
+    lambda_day_mismatch: float = 12.0
+    lambda_reference_price: float = 0.35
+    reference_memory_alpha: float = 0.85
+    weekday_arrival_fallback_mean: float = 18.0
+    weekend_arrival_fallback_mean: float = 28.0
+
+
+@dataclass
+class EnvConfig:
+    capacity: int = 120
+    episode_days: int = 14
+    price_min: float = 50.0
+    price_max: float = 300.0
+    full_capacity_penalty: float = 80.0
+    start_day: int = 0
+
+
+@dataclass
+class PPOConfig:
+    total_timesteps: int = 200_000
+    learning_rate: float = 3e-4
+    n_steps: int = 14
+    batch_size: int = 14
+    gamma: float = 0.99
+    gae_lambda: float = 0.95
+    clip_range: float = 0.2
+    ent_coef: float = 0.0
+    vf_coef: float = 0.5
+    max_grad_norm: float = 0.5
+    net_arch: tuple[int, int] = (128, 128)
+    seed: int = 42
+    device: str = "auto"
+    normalize_obs: bool = True
+    normalize_reward: bool = False
+    reward_clip: float = 10.0
+    obs_clip: float = 10.0
+    save_name: str = "ppo_idea2_hotel"
+    run_name: str = "idea2_ppo"
+    log_interval: int = 10
+
+
+@dataclass
+class ProjectConfig:
+    paths: PathConfig = field(default_factory=PathConfig)
+    data: DataConfig = field(default_factory=DataConfig)
+    abm: ABMConfig = field(default_factory=ABMConfig)
+    env: EnvConfig = field(default_factory=EnvConfig)
+    ppo: PPOConfig = field(default_factory=PPOConfig)
+
+    def validate(self) -> None:
+        if self.abm.window_size != 3:
+            raise ValueError("idea2 模型要求滚动窗口固定为 3 天。")
+        if self.env.price_min >= self.env.price_max:
+            raise ValueError("price_min 必须小于 price_max。")
+        if not (0.0 < self.abm.reference_memory_alpha < 1.0):
+            raise ValueError("reference_memory_alpha 必须位于 (0, 1) 内。")
+        if self.env.capacity <= 0:
+            raise ValueError("capacity 必须为正数。")
+        if self.env.episode_days <= 0:
+            raise ValueError("episode_days 必须为正数。")
+
+    def setup(self) -> None:
+        self.validate()
+        self.paths.ensure_dirs()
+
+
+CONFIG = ProjectConfig()
+CONFIG.setup()
+
+PATH_CONFIG = CONFIG.paths
+DATA_CONFIG = CONFIG.data
+ABM_CONFIG = CONFIG.abm
+ENV_CONFIG = CONFIG.env
+PPO_CONFIG = CONFIG.ppo
+
+
+def get_config() -> ProjectConfig:
+    return CONFIG
+
 
 __all__ = [
-    'PROJECT_ROOT',
-    'DATA_PATH',
-    'PathConfig',
-    'ABMConfig',
-    'RLConfig',
-    'EnvConfig',
-    'SimulationConfig',
-    'RandomConfig',
-    'SystemConfig',
-    'LogConfig',
-    'ABM_PERTURBATION_TEMPLATES',
-    'apply_abm_perturbation_template',
-    'calculate_monthly_arrival_rates',
-    'fit_lead_time_distribution',
-    'build_empirical_lead_time_distribution',
-    'fit_wtp_distribution',
-    'create_abm_config',
-    'PATH_CONFIG',
-    'ABM_CONFIG',
-    'ABM_PERTURBATION_TEMPLATE',
-    'RL_CONFIG',
-    'ENV_CONFIG',
-    'SIMULATION_CONFIG',
-    'RANDOM_CONFIG',
-    'SYSTEM_CONFIG',
-    'LOG_CONFIG',
-    'validate_config',
+    "PROJECT_ROOT",
+    "PathConfig",
+    "DataConfig",
+    "ABMConfig",
+    "EnvConfig",
+    "PPOConfig",
+    "ProjectConfig",
+    "CONFIG",
+    "PATH_CONFIG",
+    "DATA_CONFIG",
+    "ABM_CONFIG",
+    "ENV_CONFIG",
+    "PPO_CONFIG",
+    "get_config",
 ]
-
-# 使用更直观的常量切换扰动模板（none / mild / medium / stress）
-ABM_PERTURBATION_TEMPLATE = 'mild'
-
-(
-    PATH_CONFIG,
-    ABM_CONFIG,
-    RL_CONFIG,
-    ENV_CONFIG,
-    SIMULATION_CONFIG,
-    RANDOM_CONFIG,
-    SYSTEM_CONFIG,
-    LOG_CONFIG,
-    _runtime_template,
-) = load_runtime_configs(perturbation_template=ABM_PERTURBATION_TEMPLATE)
-
-
-def validate_config() -> bool:
-    """兼容旧签名：无参验证当前全局配置。"""
-    return _validate_config(RL_CONFIG, ENV_CONFIG)
-
-
-if not validate_config():
-    print("配置验证失败，请检查配置文件")

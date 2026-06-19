@@ -4,42 +4,13 @@
     // 欲了解更多信息，请访问: https://go.microsoft.com/fwlink/?linkid=830387
     "version": "0.2.0",
     "configurations": [
+    
         {
-            "name": "Debugger train_game.py (Main)",
+            "name": "Debugger train_ppo.py (Main)",
             "type": "debugpy",
             "request": "launch",
-            "program": "${workspaceFolder}/experiments/train_game.py",
-            "args": ["--episodes", "100"],
-            "console": "integratedTerminal"
-        },
-        {
-            "name": "Debugger train_game.py",
-            "type": "debugpy",
-            "request": "launch",
-            "program": "${workspaceFolder}/experiments/train_game.py",
-            "args": ["--episodes", "50"],
-            "console": "integratedTerminal"
-        },
-        {
-            "name": "Debugger experiment2",
-            "type": "debugpy",
-            "request": "launch",
-            "program": "${workspaceFolder}/experiments/experiment2_ablation_comparison/main.py",
-            "args": ["--mode", "debug"],
-            "console": "integratedTerminal"
-        },
-        {
-            "type": "node-terminal",
-            "name": "JavaScript 调试终端",
-            "request": "launch",
-            "cwd": "${workspaceFolder}"
-        },
-        {
-            "name": "Debugger experiment_PPO",
-            "type": "debugpy",
-            "request": "launch",
-            "program": "${workspaceFolder}/experiments/experiment2_ablation_comparison/main.py",
-            "args": ["--mode", "debug","--skip-emsrb","--skip-cem","--skip-qlearning"],
+            "program": "${workspaceFolder}/train_ppo.py",
+            "args": [],
             "console": "integratedTerminal"
         }
     ]

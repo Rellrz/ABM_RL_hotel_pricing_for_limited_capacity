@@ -1,0 +1,59 @@
+{
+  "paths": {
+    "project_root": "/Users/raily/Desktop/hotel_pricing/ABM_hotel_capacity_pricing",
+    "data_path": "/Users/raily/Desktop/hotel_pricing/ABM_hotel_capacity_pricing/datasets/hotel_bookings.csv",
+    "output_root": "/Users/raily/Desktop/hotel_pricing/ABM_hotel_capacity_pricing/outputs",
+    "model_dir": "/Users/raily/Desktop/hotel_pricing/ABM_hotel_capacity_pricing/outputs/models",
+    "tensorboard_dir": "/Users/raily/Desktop/hotel_pricing/ABM_hotel_capacity_pricing/outputs/tensorboard",
+    "log_dir": "/Users/raily/Desktop/hotel_pricing/ABM_hotel_capacity_pricing/outputs/logs"
+  },
+  "data": {
+    "hotel_name": "City Hotel",
+    "max_lead_time": 2,
+    "adr_column": "adr",
+    "seed": 42
+  },
+  "abm": {
+    "window_size": 3,
+    "wtp_min": 30.0,
+    "utility_noise_std": 8.0,
+    "lambda_day_mismatch": 12.0,
+    "lambda_reference_price": 0.35,
+    "reference_memory_alpha": 0.85,
+    "weekday_arrival_fallback_mean": 18.0,
+    "weekend_arrival_fallback_mean": 28.0
+  },
+  "env": {
+    "capacity": 120,
+    "episode_days": 14,
+    "price_min": 50.0,
+    "price_max": 300.0,
+    "full_capacity_penalty": 80.0,
+    "start_day": 0
+  },
+  "ppo": {
+    "total_timesteps": 200000,
+    "learning_rate": 0.0003,
+    "n_steps": 14,
+    "batch_size": 14,
+    "gamma": 0.99,
+    "gae_lambda": 0.95,
+    "clip_range": 0.2,
+    "ent_coef": 0.0,
+    "vf_coef": 0.5,
+    "max_grad_norm": 0.5,
+    "net_arch": [
+      128,
+      128
+    ],
+    "seed": 42,
+    "device": "auto",
+    "normalize_obs": true,
+    "normalize_reward": false,
+    "reward_clip": 10.0,
+    "obs_clip": 10.0,
+    "save_name": "ppo_idea2_hotel",
+    "run_name": "idea2_ppo",
+    "log_interval": 10
+  }
+}
