@@ -1,0 +1,53 @@
+{
+  "upper_bound": 2716.8389393039556,
+  "runner_summary": {
+    "static_action": [
+      200.0,
+      167.0
+    ],
+    "n_rows": 27000,
+    "algorithms": [
+      "CEM",
+      "Random",
+      "Static"
+    ],
+    "seeds": [
+      20260421,
+      20260422,
+      20260423,
+      20260424,
+      20260425,
+      20260426,
+      20260427,
+      20260428,
+      20260429,
+      20260430,
+      20260431,
+      20260432,
+      20260433,
+      20260434,
+      20260435,
+      20260436,
+      20260437,
+      20260438,
+      20260439,
+      20260440,
+      20260441,
+      20260442,
+      20260443,
+      20260444,
+      20260445,
+      20260446,
+      20260447,
+      20260448,
+      20260449,
+      20260450
+    ],
+    "cem_deterministic_eval": true
+  },
+  "plot_summary": {
+    "figure_path": "/Users/raily/Desktop/hotel_pricing/ABM_hotel_pricing/experiments/experiment1_optimality_convergence/artifacts/figures/convergence.pdf",
+    "static_mean": 2689.4796744444443,
+    "random_mean": 2236.633090375925
+  }
+}
