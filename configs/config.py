@@ -43,8 +43,8 @@ class ABMConfig:
 
 @dataclass
 class EnvConfig:
-    capacity: int = 120
-    episode_days: int = 14
+    capacity: int = 30
+    episode_days: int = 400
     price_min: float = 50.0
     price_max: float = 300.0
     full_capacity_penalty: float = 80.0
@@ -53,21 +53,24 @@ class EnvConfig:
 
 @dataclass
 class PPOConfig:
-    total_timesteps: int = 200_000
-    learning_rate: float = 3e-4
-    n_steps: int = 14
-    batch_size: int = 14
+    total_timesteps: int = 800_000
+    learning_rate: float = 1e-4
+    n_steps: int = 128
+    batch_size: int = 40
+    n_epochs: int = 10
     gamma: float = 0.99
     gae_lambda: float = 0.95
-    clip_range: float = 0.2
-    ent_coef: float = 0.0
+    clip_range: float = 0.1
+    ent_coef: float = 0.01
     vf_coef: float = 0.5
-    max_grad_norm: float = 0.5
-    net_arch: tuple[int, int] = (128, 128)
+    max_grad_norm: float = 0.3
+    target_kl: float = 0.02
+    actor_net_arch: tuple[int, int] = (128, 128)
+    critic_net_arch: tuple[int, int] = (256, 256)
     seed: int = 42
     device: str = "auto"
     normalize_obs: bool = True
-    normalize_reward: bool = False
+    normalize_reward: bool = True
     reward_clip: float = 10.0
     obs_clip: float = 10.0
     save_name: str = "ppo_idea2_hotel"

@@ -118,14 +118,21 @@ def main() -> None:
         learning_rate=float(PPO_CONFIG.learning_rate),
         n_steps=int(PPO_CONFIG.n_steps),
         batch_size=int(PPO_CONFIG.batch_size),
+        n_epochs=int(PPO_CONFIG.n_epochs),
         gamma=float(PPO_CONFIG.gamma),
         gae_lambda=float(PPO_CONFIG.gae_lambda),
         clip_range=float(PPO_CONFIG.clip_range),
         ent_coef=float(PPO_CONFIG.ent_coef),
         vf_coef=float(PPO_CONFIG.vf_coef),
         max_grad_norm=float(PPO_CONFIG.max_grad_norm),
+        target_kl=float(PPO_CONFIG.target_kl),
         tensorboard_log=str(PATH_CONFIG.tensorboard_dir),
-        policy_kwargs={"net_arch": list(PPO_CONFIG.net_arch)},
+        policy_kwargs={
+            "net_arch": {
+                "pi": list(PPO_CONFIG.actor_net_arch),
+                "vf": list(PPO_CONFIG.critic_net_arch),
+            }
+        },
         seed=int(PPO_CONFIG.seed),
         device=str(PPO_CONFIG.device),
         verbose=1,
