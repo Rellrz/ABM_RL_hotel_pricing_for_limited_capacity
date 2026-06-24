@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import argparse
+from concurrent.futures import ProcessPoolExecutor, as_completed
 import json
+import multiprocessing as mp
 from datetime import datetime
 from pathlib import Path
 import sys
@@ -58,6 +60,12 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="关闭 Stable-Baselines3 训练进度条",
     )
+    parser.add_argument(
+        "--max-workers",
+        type=int,
+        default=1,
+        help="并行进程数，设为大于 1 时会对不同 capacity 并行训练与评估",
+    )
     return parser.parse_args()
 
 
@@ -100,6 +108,47 @@ def plot_metric(df: pd.DataFrame, metric: str, output_dir: Path) -> None:
     plt.close()
 
 
+def run_capacity_job(
+    capacity: int,
+    historical_data: pd.DataFrame | None,
+    train_seed: int,
+    eval_seed: int,
+    total_timesteps: int,
+    no_progress_bar: bool,
+    run_prefix: str,
+) -> dict[str, float | int | str]:
+    if historical_data is None:
+        historical_data = load_filtered_historical_data()
+    run_name = f"{run_prefix}_cap{capacity}"
+    model, train_vec_env, run_dir = train_single_run(
+        run_name=run_name,
+        historical_data=historical_data,
+        capacity=int(capacity),
+        train_seed=int(train_seed),
+        total_timesteps=int(total_timesteps),
+        progress_bar=not bool(no_progress_bar),
+        verbose=1,
+    )
+    metrics = evaluate_policy(
+        model=model,
+        train_vec_env=train_vec_env,
+        historical_data=historical_data,
+        capacity=int(capacity),
+        eval_seed=int(eval_seed),
+    )
+    train_vec_env.close()
+
+    row: dict[str, float | int | str] = {
+        "capacity": int(capacity),
+        "train_seed": int(train_seed),
+        "eval_seed": int(eval_seed),
+        "run_name": run_name,
+        "run_dir": str(run_dir),
+    }
+    row.update(metrics)
+    return row
+
+
 def main() -> None:
     args = parse_args()
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -110,40 +159,48 @@ def main() -> None:
 
     historical_data = load_filtered_historical_data()
     results: list[dict[str, float | int | str]] = []
+    max_workers = max(1, int(args.max_workers))
 
-    for capacity in args.capacities:
-        run_name = f"{args.run_prefix}_cap{capacity}"
-        model, train_vec_env, run_dir = train_single_run(
-            run_name=run_name,
-            historical_data=historical_data,
-            capacity=int(capacity),
-            train_seed=int(args.train_seed),
-            total_timesteps=int(args.total_timesteps),
-            progress_bar=not bool(args.no_progress_bar),
-            verbose=1,
-        )
-        metrics = evaluate_policy(
-            model=model,
-            train_vec_env=train_vec_env,
-            historical_data=historical_data,
-            capacity=int(capacity),
-            eval_seed=int(args.eval_seed),
-        )
-        train_vec_env.close()
-
-        row: dict[str, float | int | str] = {
-            "capacity": int(capacity),
-            "train_seed": int(args.train_seed),
-            "eval_seed": int(args.eval_seed),
-            "run_name": run_name,
-            "run_dir": str(run_dir),
-        }
-        row.update(metrics)
-        results.append(row)
-        print(
-            f"[capacity={capacity}] revenue={metrics['episode_revenue']:.2f}, "
-            f"reward={metrics['episode_reward']:.2f}, full_day_rate={metrics['full_day_rate']:.4f}"
-        )
+    if max_workers == 1:
+        for capacity in args.capacities:
+            row = run_capacity_job(
+                capacity=int(capacity),
+                historical_data=historical_data,
+                train_seed=int(args.train_seed),
+                eval_seed=int(args.eval_seed),
+                total_timesteps=int(args.total_timesteps),
+                no_progress_bar=bool(args.no_progress_bar),
+                run_prefix=str(args.run_prefix),
+            )
+            results.append(row)
+            print(
+                f"[capacity={capacity}] revenue={float(row['episode_revenue']):.2f}, "
+                f"reward={float(row['episode_reward']):.2f}, full_day_rate={float(row['full_day_rate']):.4f}"
+            )
+    else:
+        spawn_context = mp.get_context("spawn")
+        with ProcessPoolExecutor(max_workers=max_workers, mp_context=spawn_context) as executor:
+            future_to_capacity = {
+                executor.submit(
+                    run_capacity_job,
+                    int(capacity),
+                    None,
+                    int(args.train_seed),
+                    int(args.eval_seed),
+                    int(args.total_timesteps),
+                    bool(args.no_progress_bar),
+                    str(args.run_prefix),
+                ): int(capacity)
+                for capacity in args.capacities
+            }
+            for future in as_completed(future_to_capacity):
+                capacity = future_to_capacity[future]
+                row = future.result()
+                results.append(row)
+                print(
+                    f"[capacity={capacity}] revenue={float(row['episode_revenue']):.2f}, "
+                    f"reward={float(row['episode_reward']):.2f}, full_day_rate={float(row['full_day_rate']):.4f}"
+                )
 
     results_df = pd.DataFrame(results).sort_values("capacity").reset_index(drop=True)
     csv_path = experiment_root / "capacity_sensitivity_results.csv"
@@ -157,6 +214,7 @@ def main() -> None:
         "train_seed": int(args.train_seed),
         "eval_seed": int(args.eval_seed),
         "total_timesteps": int(args.total_timesteps),
+        "max_workers": max_workers,
         "results_csv": str(csv_path),
         "plot_dir": str(plot_dir),
     }

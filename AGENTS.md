@@ -7,9 +7,12 @@ This repository currently implements the baseline model described in `idea2.md`.
 - `configs/config.py`: dataclass-based data, ABM, environment, PPO, and path settings.
 - `src/environment/`: customer ABM, core hotel simulation, and Gymnasium wrapper.
 - `src/utils/preprocess_data.py`: historical-data loading and demand calibration.
-- `train_ppo.py`: Stable-Baselines3 PPO training entry point.
+- `src/training/train_ppo.py`: reusable Stable-Baselines3 PPO trainer implementation.
+- `experiments/experiment_train_ppo.py`: simple single-run PPO experiment entry point.
+- `experiments/experiment_capacity_sensitivity.py`: capacity sensitivity experiment entry point with training, evaluation, CSV export, and single-metric plots.
+- `train_ppo.py`: thin compatibility wrapper that forwards to `src/training/train_ppo.py`.
 - `datasets/`: source dataset and exploratory notebook.
-- `outputs/`: generated models and TensorBoard logs; avoid committing new run artifacts unless required for reproducibility.
+- `outputs/`: generated models, experiment summaries, and TensorBoard logs; avoid committing new run artifacts unless required for reproducibility.
 
 Add automated tests under `tests/`, mirroring source modules, for example `tests/environment/test_hotel_env.py`.
 
@@ -19,12 +22,13 @@ Create an isolated Python environment before installing dependencies.
 
 ```bash
 pip install -r requirements.txt
-python train_ppo.py
+python experiments/experiment_train_ppo.py
+python experiments/experiment_capacity_sensitivity.py --capacities 20 30 40 50 60
 tensorboard --logdir outputs/tensorboard
-python -m compileall -q configs src train_ppo.py
+python -m compileall -q configs src experiments train_ppo.py
 ```
 
-The training command uses the active values in `configs/config.py`. For quick validation, temporarily reduce `total_timesteps` and `episode_days`, but do not commit debug-only values.
+The training commands use the active values in `configs/config.py`. For quick validation, temporarily reduce `total_timesteps` and `episode_days`, but do not commit debug-only values.
 
 When tests are added, run them with:
 
@@ -40,11 +44,11 @@ Use Python 3, four-space indentation, type hints, and `from __future__ import an
 - classes and dataclasses: `PascalCase`
 - constants and shared configuration objects: `UPPER_SNAKE_CASE`
 
-Keep simulation logic in `src/environment`, calibration logic in `src/utils`, and experiment parameters in `configs/config.py`. Prefer NumPy generators over global random state, and preserve explicit seed handling.
+Keep simulation logic in `src/environment`, calibration logic in `src/utils`, reusable PPO training logic in `src/training`, and experiment entry points in `experiments`. Prefer NumPy generators over global random state, and preserve explicit seed handling.
 
 ## Testing Guidelines
 
-Use `pytest`. Name files `test_*.py` and tests `test_<behavior>()`. Prioritize deterministic tests for inventory rolling, capacity truncation, reference-price updates, reward calculation, action scaling, and seeded resets. Any behavioral change should include a regression test and a short fixed-seed smoke run.
+Use `pytest`. Name files `test_*.py` and tests `test_<behavior>()`. Prioritize deterministic tests for inventory rolling, capacity truncation, reference-price updates, reward calculation, action scaling, seeded resets, and experiment result aggregation. Any behavioral change should include a regression test and a short fixed-seed smoke run.
 
 ## Commit & Pull Request Guidelines
 
@@ -54,4 +58,4 @@ Pull requests should state the research assumption being changed, list affected 
 
 ## Research and Configuration Discipline
 
-Separate empirical calibration from scenario assumptions. Document demand multipliers, capacity stress settings, exclusions, and random seeds in saved run configuration. Do not silently reinterpret long-lead bookings as arrivals inside the three-day `idea2` window.
+Separate empirical calibration from scenario assumptions. Document demand multipliers, capacity stress settings, exclusions, train/eval random seeds, and experiment-specific overrides in saved run configuration. Do not silently reinterpret long-lead bookings as arrivals inside the three-day `idea2` window.
