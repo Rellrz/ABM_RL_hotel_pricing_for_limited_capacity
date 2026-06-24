@@ -71,6 +71,11 @@ def main() -> None:
             self.episode_accepted = 0.0
             self.episode_prices: list[np.ndarray] = []
             self.episode_inventory: list[np.ndarray] = []
+            self.episode_inventory_before: list[np.ndarray] = []
+            self.episode_full_day_count = 0.0
+            self.episode_full_slot_count = 0.0
+            self.episode_full_slot_by_offset = np.zeros(3, dtype=float)
+            self.episode_step_count = 0.0
 
         def _on_step(self) -> bool:
             infos = self.locals.get("infos", [])
@@ -81,16 +86,38 @@ def main() -> None:
                 self.episode_arrivals += float(info.get("arrivals", 0.0))
                 accepted = np.asarray(info.get("accepted_by_offset", [0.0, 0.0, 0.0]), dtype=float)
                 prices = np.asarray(info.get("prices", [0.0, 0.0, 0.0]), dtype=float)
+                inventory_before = np.asarray(info.get("inventory_before", [0.0, 0.0, 0.0]), dtype=float)
                 inventory = np.asarray(info.get("inventory_after", [0.0, 0.0, 0.0]), dtype=float)
+                full_flags = (inventory <= 0.0).astype(float)
                 self.episode_accepted += float(np.sum(accepted))
                 self.episode_prices.append(prices)
                 self.episode_inventory.append(inventory)
+                self.episode_inventory_before.append(inventory_before)
+                self.episode_full_day_count += float(np.any(full_flags > 0.0))
+                self.episode_full_slot_count += float(np.sum(full_flags))
+                self.episode_full_slot_by_offset += full_flags
+                self.episode_step_count += 1.0
 
                 done = bool(dones[idx]) if idx < len(dones) else False
                 if done:
                     avg_price = float(np.mean(np.vstack(self.episode_prices))) if self.episode_prices else 0.0
                     avg_inventory = float(np.mean(np.vstack(self.episode_inventory))) if self.episode_inventory else 0.0
+                    avg_inventory_before = (
+                        float(np.mean(np.vstack(self.episode_inventory_before)))
+                        if self.episode_inventory_before
+                        else 0.0
+                    )
                     acceptance_rate = self.episode_accepted / max(1.0, self.episode_arrivals)
+                    stacked_prices = np.vstack(self.episode_prices) if self.episode_prices else np.zeros((1, 3))
+                    stacked_inventory = np.vstack(self.episode_inventory) if self.episode_inventory else np.zeros((1, 3))
+                    stacked_inventory_before = (
+                        np.vstack(self.episode_inventory_before)
+                        if self.episode_inventory_before
+                        else np.zeros((1, 3))
+                    )
+                    full_day_rate = self.episode_full_day_count / max(1.0, self.episode_step_count)
+                    full_slot_rate = self.episode_full_slot_count / max(1.0, 3.0 * self.episode_step_count)
+                    full_slot_rate_by_offset = self.episode_full_slot_by_offset / max(1.0, self.episode_step_count)
                     self.logger.record("custom/episode_revenue", self.episode_revenue)
                     self.logger.record("custom/episode_penalty", self.episode_penalty)
                     self.logger.record("custom/episode_arrivals", self.episode_arrivals)
@@ -98,12 +125,32 @@ def main() -> None:
                     self.logger.record("custom/episode_acceptance_rate", acceptance_rate)
                     self.logger.record("custom/avg_price", avg_price)
                     self.logger.record("custom/avg_inventory", avg_inventory)
+                    self.logger.record("custom/avg_inventory_before", avg_inventory_before)
+                    self.logger.record("custom/full_day_rate", full_day_rate)
+                    self.logger.record("custom/full_slot_rate", full_slot_rate)
+                    self.logger.record("custom/avg_price_day0", float(np.mean(stacked_prices[:, 0])))
+                    self.logger.record("custom/avg_price_day1", float(np.mean(stacked_prices[:, 1])))
+                    self.logger.record("custom/avg_price_day2", float(np.mean(stacked_prices[:, 2])))
+                    self.logger.record("custom/avg_inventory_day0", float(np.mean(stacked_inventory[:, 0])))
+                    self.logger.record("custom/avg_inventory_day1", float(np.mean(stacked_inventory[:, 1])))
+                    self.logger.record("custom/avg_inventory_day2", float(np.mean(stacked_inventory[:, 2])))
+                    self.logger.record("custom/avg_inventory_before_day0", float(np.mean(stacked_inventory_before[:, 0])))
+                    self.logger.record("custom/avg_inventory_before_day1", float(np.mean(stacked_inventory_before[:, 1])))
+                    self.logger.record("custom/avg_inventory_before_day2", float(np.mean(stacked_inventory_before[:, 2])))
+                    self.logger.record("custom/full_rate_day0", float(full_slot_rate_by_offset[0]))
+                    self.logger.record("custom/full_rate_day1", float(full_slot_rate_by_offset[1]))
+                    self.logger.record("custom/full_rate_day2", float(full_slot_rate_by_offset[2]))
                     self.episode_revenue = 0.0
                     self.episode_penalty = 0.0
                     self.episode_arrivals = 0.0
                     self.episode_accepted = 0.0
                     self.episode_prices = []
                     self.episode_inventory = []
+                    self.episode_inventory_before = []
+                    self.episode_full_day_count = 0.0
+                    self.episode_full_slot_count = 0.0
+                    self.episode_full_slot_by_offset = np.zeros(3, dtype=float)
+                    self.episode_step_count = 0.0
             return True
 
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")

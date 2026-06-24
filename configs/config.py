@@ -43,7 +43,7 @@ class ABMConfig:
 
 @dataclass
 class EnvConfig:
-    capacity: int = 30
+    capacity: int = 50
     episode_days: int = 400
     price_min: float = 50.0
     price_max: float = 300.0
