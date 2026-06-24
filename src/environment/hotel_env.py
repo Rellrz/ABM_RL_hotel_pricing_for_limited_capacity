@@ -12,8 +12,13 @@ from src.environment.abm_customer_model import HotelABMModel
 class HotelEnvironment:
     """`idea2` 的最小可运行酒店定价环境。"""
 
-    def __init__(self, historical_data: Optional[pd.DataFrame] = None, random_seed: Optional[int] = None):
-        self.capacity = int(ENV_CONFIG.capacity)
+    def __init__(
+        self,
+        historical_data: Optional[pd.DataFrame] = None,
+        random_seed: Optional[int] = None,
+        capacity: Optional[int] = None,
+    ):
+        self.capacity = int(ENV_CONFIG.capacity if capacity is None else capacity)
         self.window_size = int(ABM_CONFIG.window_size)
         self.episode_days = int(ENV_CONFIG.episode_days)
         self.price_min = float(ENV_CONFIG.price_min)

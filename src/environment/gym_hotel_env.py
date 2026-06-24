@@ -14,10 +14,16 @@ from src.environment.hotel_env import HotelEnvironment
 class GymHotelPricingEnv(gym.Env):
     metadata = {"render_modes": []}
 
-    def __init__(self, historical_data: Optional[pd.DataFrame] = None, seed: Optional[int] = None):
+    def __init__(
+        self,
+        historical_data: Optional[pd.DataFrame] = None,
+        seed: Optional[int] = None,
+        capacity: Optional[int] = None,
+    ):
         super().__init__()
         self.base_seed = seed
-        self.env = HotelEnvironment(historical_data=historical_data, random_seed=seed)
+        self.capacity = capacity
+        self.env = HotelEnvironment(historical_data=historical_data, random_seed=seed, capacity=capacity)
         self.price_min = float(ENV_CONFIG.price_min)
         self.price_max = float(ENV_CONFIG.price_max)
         self.action_space = spaces.Box(
@@ -36,7 +42,11 @@ class GymHotelPricingEnv(gym.Env):
     def reset(self, *, seed: Optional[int] = None, options=None) -> Tuple[np.ndarray, dict]:
         del options
         if seed is not None and seed != self.base_seed:
-            self.env = HotelEnvironment(historical_data=self.env.abm_model.historical_data, random_seed=seed)
+            self.env = HotelEnvironment(
+                historical_data=self.env.abm_model.historical_data,
+                random_seed=seed,
+                capacity=self.capacity,
+            )
             self.base_seed = seed
         self.env.reset()
         return self.env.get_state_vector(), {}
