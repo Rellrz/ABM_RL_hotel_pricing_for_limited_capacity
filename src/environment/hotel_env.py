@@ -24,6 +24,8 @@ class HotelEnvironment:
         self.price_min = float(ENV_CONFIG.price_min)
         self.price_max = float(ENV_CONFIG.price_max)
         self.full_capacity_penalty = float(ENV_CONFIG.full_capacity_penalty)
+        self.scarcity_threshold_ratio = float(ENV_CONFIG.scarcity_threshold_ratio)
+        self.scarcity_penalty_coef = float(ENV_CONFIG.scarcity_penalty_coef)
         self.start_day = int(ENV_CONFIG.start_day)
         self.abm_model = HotelABMModel(historical_data=historical_data, random_seed=random_seed)
         self.current_day = int(self.start_day)
@@ -104,8 +106,12 @@ class HotelEnvironment:
         inventory_after = np.maximum(inventory_before - accepted, 0)
         revenue_by_offset = prices * accepted.astype(np.float64)
         revenue = float(np.sum(revenue_by_offset))
+        remaining_ratio = inventory_after.astype(np.float64) / float(self.capacity)
+        scarcity_gap = np.maximum(self.scarcity_threshold_ratio - remaining_ratio, 0.0)
+        scarcity_penalty = float(self.scarcity_penalty_coef * np.sum(scarcity_gap**2))
         full_penalty = float(self.full_capacity_penalty * np.sum(inventory_after == 0))
-        reward = float(revenue - full_penalty)
+        total_penalty = float(full_penalty + scarcity_penalty)
+        reward = float(revenue - total_penalty)
 
         updated_reference = (
             ABM_CONFIG.reference_memory_alpha * reference_before
@@ -126,9 +132,12 @@ class HotelEnvironment:
             "accepted_by_offset": accepted.astype(int).tolist(),
             "inventory_before": inventory_before.astype(int).tolist(),
             "inventory_after": inventory_after.astype(int).tolist(),
+            "remaining_ratio": remaining_ratio.astype(float).tolist(),
             "revenue_by_offset": revenue_by_offset.astype(float).tolist(),
             "revenue": float(revenue),
+            "scarcity_penalty": float(scarcity_penalty),
             "full_penalty": float(full_penalty),
+            "total_penalty": float(total_penalty),
             "reward": float(reward),
         }
         self.daily_history.append(history_row)
@@ -162,10 +171,13 @@ class HotelEnvironment:
             "rejected_by_capacity": demand["rejected_by_capacity"],
             "inventory_before": inventory_before.astype(int).tolist(),
             "inventory_after": inventory_after.astype(int).tolist(),
+            "remaining_ratio": remaining_ratio.astype(float).tolist(),
             "rolled_inventory": next_inventory.astype(int).tolist(),
             "revenue_by_offset": revenue_by_offset.astype(float).tolist(),
             "revenue": float(revenue),
+            "scarcity_penalty": float(scarcity_penalty),
             "full_penalty": float(full_penalty),
+            "total_penalty": float(total_penalty),
             "reward": float(reward),
         }
         return next_state, reward, done, info

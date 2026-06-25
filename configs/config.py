@@ -34,7 +34,7 @@ class ABMConfig:
     window_size: int = 3
     wtp_min: float = 30.0
     utility_noise_std: float = 8.0
-    lambda_day_mismatch: float = 12.0
+    lambda_day_mismatch: float = 500.0
     lambda_reference_price: float = 0.35
     reference_memory_alpha: float = 0.85
     weekday_arrival_fallback_mean: float = 18.0
@@ -44,16 +44,18 @@ class ABMConfig:
 @dataclass
 class EnvConfig:
     capacity: int = 50
-    episode_days: int = 400
+    episode_days: int = 256
     price_min: float = 50.0
     price_max: float = 300.0
     full_capacity_penalty: float = 80.0
+    scarcity_threshold_ratio: float = 0.3
+    scarcity_penalty_coef: float = 400.0
     start_day: int = 0
 
 
 @dataclass
 class PPOConfig:
-    total_timesteps: int = 800_000
+    total_timesteps: int = 51200
     learning_rate: float = 1e-4
     n_steps: int = 128
     batch_size: int = 64
@@ -97,6 +99,10 @@ class ProjectConfig:
             raise ValueError("capacity 必须为正数。")
         if self.env.episode_days <= 0:
             raise ValueError("episode_days 必须为正数。")
+        if not (0.0 < self.env.scarcity_threshold_ratio < 1.0):
+            raise ValueError("scarcity_threshold_ratio 必须位于 (0, 1) 内。")
+        if self.env.scarcity_penalty_coef < 0.0:
+            raise ValueError("scarcity_penalty_coef 不能为负数。")
 
     def setup(self) -> None:
         self.validate()
