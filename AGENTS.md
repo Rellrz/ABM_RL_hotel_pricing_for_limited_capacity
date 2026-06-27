@@ -63,6 +63,8 @@ Pull requests should state the research assumption being changed, list affected 
 
 Separate empirical calibration from scenario assumptions. Document demand multipliers, capacity stress settings, exclusions, train/eval random seeds, and experiment-specific overrides in saved run configuration. Do not silently reinterpret long-lead bookings as arrivals inside the three-day `idea2` window.
 
+For routine research iteration, prefer changing `configs/config.py`, experiment script arguments, or explicit experiment-level overrides before modifying files under `src/`. Only change `src/` when the current code path cannot express the intended experiment through parameters alone, or when fixing a confirmed modeling/implementation bug. When `src/` changes are necessary, keep them minimal, explain why parameter-only control was insufficient, and avoid mixing reusable logic changes with one-off experimental tuning.
+
 Current research findings indicate two important cautions:
 
 - Reward penalties alone do not explain the extreme price structures observed in experiments; cross-day substitution in the ABM is currently the dominant driver of "low-price funnel + high-price blocking" behavior.

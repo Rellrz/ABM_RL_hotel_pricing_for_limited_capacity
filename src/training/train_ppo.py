@@ -97,6 +97,7 @@ def build_env(
     capacity: Optional[int] = None,
     training: bool = True,
     norm_reward: Optional[bool] = None,
+    env_overrides: Optional[dict[str, Any]] = None,
 ):
     from stable_baselines3.common.monitor import Monitor
     from stable_baselines3.common.vec_env import DummyVecEnv, VecNormalize
@@ -105,9 +106,15 @@ def build_env(
     historical_data = load_filtered_historical_data() if historical_data is None else historical_data
     env_seed = int(PPO_CONFIG.seed if seed is None else seed)
     reward_norm = bool(PPO_CONFIG.normalize_reward if norm_reward is None else norm_reward)
+    env_kwargs = dict(env_overrides or {})
 
     def _make_env():
-        env = GymHotelPricingEnv(historical_data=historical_data, seed=env_seed, capacity=capacity)
+        env = GymHotelPricingEnv(
+            historical_data=historical_data,
+            seed=env_seed,
+            capacity=capacity,
+            **env_kwargs,
+        )
         return Monitor(env)
 
     vec_env = DummyVecEnv([_make_env])
@@ -229,6 +236,7 @@ def train_single_run(
     total_timesteps: Optional[int] = None,
     progress_bar: bool = True,
     verbose: int = 1,
+    env_overrides: Optional[dict[str, Any]] = None,
 ):
     effective_run_name = PPO_CONFIG.run_name if run_name is None else run_name
     effective_seed = int(PPO_CONFIG.seed if train_seed is None else train_seed)
@@ -242,6 +250,7 @@ def train_single_run(
         seed=effective_seed,
         capacity=capacity,
         training=True,
+        env_overrides=env_overrides,
     )
     callback = create_tensorboard_callback()
     model = create_model(
@@ -257,12 +266,16 @@ def train_single_run(
         tb_log_name=effective_run_name,
         progress_bar=progress_bar,
     )
+    env_config_overrides = {"capacity": int(capacity if capacity is not None else CONFIG.env.capacity)}
+    if env_overrides:
+        env_config_overrides.update(env_overrides)
+
     save_run_artifacts(
         model,
         vec_env,
         run_dir,
         config_overrides={
-            "env": {"capacity": int(capacity if capacity is not None else CONFIG.env.capacity)},
+            "env": env_config_overrides,
             "ppo": {
                 "seed": effective_seed,
                 "run_name": effective_run_name,
@@ -273,13 +286,20 @@ def train_single_run(
     return model, vec_env, run_dir
 
 
-def build_eval_env(train_vec_env, historical_data=None, seed: Optional[int] = None, capacity: Optional[int] = None):
+def build_eval_env(
+    train_vec_env,
+    historical_data=None,
+    seed: Optional[int] = None,
+    capacity: Optional[int] = None,
+    env_overrides: Optional[dict[str, Any]] = None,
+):
     eval_env = build_env(
         historical_data=historical_data,
         seed=seed,
         capacity=capacity,
         training=False,
         norm_reward=False,
+        env_overrides=env_overrides,
     )
     eval_env.obs_rms = deepcopy(train_vec_env.obs_rms)
     if hasattr(train_vec_env, "ret_rms"):

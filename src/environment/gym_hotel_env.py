@@ -19,11 +19,24 @@ class GymHotelPricingEnv(gym.Env):
         historical_data: Optional[pd.DataFrame] = None,
         seed: Optional[int] = None,
         capacity: Optional[int] = None,
+        full_capacity_penalty: Optional[float] = None,
+        penalty_scale_mode: Optional[str] = None,
+        penalty_capacity_ref: Optional[int] = None,
     ):
         super().__init__()
         self.base_seed = seed
         self.capacity = capacity
-        self.env = HotelEnvironment(historical_data=historical_data, random_seed=seed, capacity=capacity)
+        self.full_capacity_penalty = full_capacity_penalty
+        self.penalty_scale_mode = penalty_scale_mode
+        self.penalty_capacity_ref = penalty_capacity_ref
+        self.env = HotelEnvironment(
+            historical_data=historical_data,
+            random_seed=seed,
+            capacity=capacity,
+            full_capacity_penalty=full_capacity_penalty,
+            penalty_scale_mode=penalty_scale_mode,
+            penalty_capacity_ref=penalty_capacity_ref,
+        )
         self.price_min = float(ENV_CONFIG.price_min)
         self.price_max = float(ENV_CONFIG.price_max)
         self.action_space = spaces.Box(
@@ -46,6 +59,9 @@ class GymHotelPricingEnv(gym.Env):
                 historical_data=self.env.abm_model.historical_data,
                 random_seed=seed,
                 capacity=self.capacity,
+                full_capacity_penalty=self.full_capacity_penalty,
+                penalty_scale_mode=self.penalty_scale_mode,
+                penalty_capacity_ref=self.penalty_capacity_ref,
             )
             self.base_seed = seed
         self.env.reset()
