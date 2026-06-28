@@ -34,7 +34,9 @@ class ABMConfig:
     window_size: int = 3
     wtp_min: float = 30.0
     utility_noise_std: float = 8.0
-    lambda_day_mismatch: float = 500.0
+    flexible_customer_share: float = 0.5
+    lambda_day_mismatch_biz: float = 1000.0
+    lambda_day_mismatch_flex: float = 12.0
     lambda_reference_price: float = 0.35
     reference_memory_alpha: float = 0.85
     weekday_arrival_fallback_mean: float = 18.0
@@ -83,16 +85,49 @@ class PPOConfig:
 
 
 @dataclass
+class SACConfig:
+    total_timesteps: int = 512000
+    learning_rate: float = 3e-4
+    buffer_size: int = 200000
+    learning_starts: int = 1000
+    batch_size: int = 256
+    tau: float = 0.005
+    gamma: float = 0.99
+    train_freq: int = 1
+    gradient_steps: int = 1
+    ent_coef: str = "auto"
+    target_entropy: str = "auto"
+    actor_net_arch: tuple[int, int] = (256, 256)
+    critic_net_arch: tuple[int, int] = (256, 256)
+    seed: int = 42
+    device: str = "auto"
+    normalize_obs: bool = True
+    normalize_reward: bool = True
+    reward_clip: float = 10.0
+    obs_clip: float = 10.0
+    save_name: str = "sac_idea2_hotel"
+    run_name: str = "idea2_sac"
+    log_interval: int = 10
+
+
+@dataclass
 class ProjectConfig:
     paths: PathConfig = field(default_factory=PathConfig)
     data: DataConfig = field(default_factory=DataConfig)
     abm: ABMConfig = field(default_factory=ABMConfig)
     env: EnvConfig = field(default_factory=EnvConfig)
     ppo: PPOConfig = field(default_factory=PPOConfig)
+    sac: SACConfig = field(default_factory=SACConfig)
 
     def validate(self) -> None:
         if self.abm.window_size != 3:
             raise ValueError("idea2 模型要求滚动窗口固定为 3 天。")
+        if not (0.0 <= self.abm.flexible_customer_share <= 1.0):
+            raise ValueError("flexible_customer_share 必须位于 [0, 1] 内。")
+        if self.abm.lambda_day_mismatch_biz < 0.0:
+            raise ValueError("lambda_day_mismatch_biz 不能为负数。")
+        if self.abm.lambda_day_mismatch_flex < 0.0:
+            raise ValueError("lambda_day_mismatch_flex 不能为负数。")
         if self.env.price_min >= self.env.price_max:
             raise ValueError("price_min 必须小于 price_max。")
         if not (0.0 < self.abm.reference_memory_alpha < 1.0):
@@ -123,6 +158,7 @@ DATA_CONFIG = CONFIG.data
 ABM_CONFIG = CONFIG.abm
 ENV_CONFIG = CONFIG.env
 PPO_CONFIG = CONFIG.ppo
+SAC_CONFIG = CONFIG.sac
 
 
 def get_config() -> ProjectConfig:
@@ -136,6 +172,7 @@ __all__ = [
     "ABMConfig",
     "EnvConfig",
     "PPOConfig",
+    "SACConfig",
     "ProjectConfig",
     "CONFIG",
     "PATH_CONFIG",
@@ -143,5 +180,6 @@ __all__ = [
     "ABM_CONFIG",
     "ENV_CONFIG",
     "PPO_CONFIG",
+    "SAC_CONFIG",
     "get_config",
 ]

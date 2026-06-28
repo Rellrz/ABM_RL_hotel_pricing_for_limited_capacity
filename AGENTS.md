@@ -2,7 +2,7 @@
 
 ## Project Structure & Module Organization
 
-This repository currently implements the baseline model described in `idea2.md`. Treat `idea.md` as a future extension, not as part of the current acceptance scope.
+This repository currently implements the baseline model described in `idea2.md`. The current `idea2` baseline uses a two-segment customer ABM: `biz` customers mostly stick to their ideal stay date, while `flex` customers can shift across the three-day window in response to price. Treat `idea.md` as a future extension, not as part of the current acceptance scope.
 
 - `configs/config.py`: dataclass-based data, ABM, environment, PPO, and path settings.
 - `src/environment/`: customer ABM, core hotel simulation, and Gymnasium wrapper.
@@ -65,9 +65,12 @@ Separate empirical calibration from scenario assumptions. Document demand multip
 
 For routine research iteration, prefer changing `configs/config.py`, experiment script arguments, or explicit experiment-level overrides before modifying files under `src/`. Only change `src/` when the current code path cannot express the intended experiment through parameters alone, or when fixing a confirmed modeling/implementation bug. When `src/` changes are necessary, keep them minimal, explain why parameter-only control was insufficient, and avoid mixing reusable logic changes with one-off experimental tuning.
 
+For the current `idea2` customer segmentation, treat `flexible_customer_share`, `lambda_day_mismatch_biz`, and `lambda_day_mismatch_flex` as scenario parameters first, not as directly identified facts from the booking data. When studying cross-day substitution, prefer sweeping these configuration values in experiments before adding more ABM complexity.
+
 Current research findings indicate two important cautions:
 
 - Reward penalties alone do not explain the extreme price structures observed in experiments; cross-day substitution in the ABM is currently the dominant driver of "low-price funnel + high-price blocking" behavior.
 - `day0` being relatively cheaper is not automatically a bug, because it has the shortest remaining selling horizon. The modeling concern is when this mild dynamic-pricing effect is amplified into extreme cross-day funneling.
+- In the segmented-demand version of `idea2`, the key structural question is how much substitution comes from the `flex` segment versus how much rigid demand is anchored by the `biz` segment. Keep that distinction explicit in experiment design and result interpretation.
 
 If you change the reward design, keep the configuration explicit in `configs/config.py` and preserve separate logging for revenue, total penalty, full-capacity penalty, and scarcity penalty so experimental comparisons remain interpretable.
