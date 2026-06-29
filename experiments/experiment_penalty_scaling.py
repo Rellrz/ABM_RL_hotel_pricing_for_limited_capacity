@@ -14,9 +14,10 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from configs.config import ENV_CONFIG, PATH_CONFIG, PPO_CONFIG
+from configs.config import ENV_CONFIG, PATH_CONFIG
 from src.environment.abm_customer_model import load_filtered_historical_data
-from src.training.train_ppo import EpisodeMetricsAggregator, build_eval_env, train_single_run
+from src.training.train_ppo import EpisodeMetricsAggregator
+from src.training.algorithm_registry import get_algorithm_choices, get_algorithm_runner
 
 
 DEFAULT_CAPACITIES = [20, 30, 40, 50, 60]
@@ -41,15 +42,16 @@ PLOT_METRICS = [
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="惩罚缩放机制对照实验")
+    parser.add_argument("--algo", type=str, default="ppo", choices=get_algorithm_choices(), help="训练算法")
     parser.add_argument("--capacities", nargs="+", type=int, default=DEFAULT_CAPACITIES, help="要扫描的容量列表")
     parser.add_argument("--modes", nargs="+", type=str, default=DEFAULT_MODES, help="惩罚缩放模式列表")
-    parser.add_argument("--train-seed", type=int, default=int(PPO_CONFIG.seed), help="训练用随机种子")
-    parser.add_argument("--eval-seed", type=int, default=int(PPO_CONFIG.seed) + 100, help="评估用新随机种子")
+    parser.add_argument("--train-seed", type=int, default=None, help="训练用随机种子，默认使用所选算法配置")
+    parser.add_argument("--eval-seed", type=int, default=None, help="评估用新随机种子，默认使用 train_seed + 100")
     parser.add_argument(
         "--total-timesteps",
         type=int,
-        default=int(PPO_CONFIG.total_timesteps),
-        help="每个容量-模式组合的训练步数",
+        default=None,
+        help="每个容量-模式组合的训练步数，默认使用所选算法配置",
     )
     parser.add_argument(
         "--base-penalty",
@@ -94,12 +96,13 @@ def compute_effective_full_penalty(mode: str, capacity: int, base_penalty: float
 def evaluate_policy(
     model,
     train_vec_env,
+    build_eval_env_fn,
     historical_data: pd.DataFrame,
     capacity: int,
     eval_seed: int,
     env_overrides: dict[str, float | int | str],
 ) -> dict[str, float]:
-    eval_env = build_eval_env(
+    eval_env = build_eval_env_fn(
         train_vec_env=train_vec_env,
         historical_data=historical_data,
         seed=eval_seed,
@@ -142,6 +145,7 @@ def plot_metric(df: pd.DataFrame, metric: str, output_dir: Path) -> None:
 
 
 def run_penalty_job(
+    algo: str,
     capacity: int,
     mode: str,
     historical_data: pd.DataFrame | None,
@@ -155,14 +159,17 @@ def run_penalty_job(
 ) -> dict[str, float | int | str]:
     if historical_data is None:
         historical_data = load_filtered_historical_data()
+    runner = get_algorithm_runner(algo)
+    train_single_run_fn = runner["train_single_run"]
+    build_eval_env_fn = runner["build_eval_env"]
 
     env_overrides = {
         "full_capacity_penalty": float(base_penalty),
         "penalty_scale_mode": str(mode),
         "penalty_capacity_ref": int(penalty_capacity_ref),
     }
-    run_name = f"{run_prefix}_{mode}_cap{capacity}"
-    model, train_vec_env, run_dir = train_single_run(
+    run_name = f"{run_prefix}_{algo}_{mode}_cap{capacity}"
+    model, train_vec_env, run_dir = train_single_run_fn(
         run_name=run_name,
         historical_data=historical_data,
         capacity=int(capacity),
@@ -175,6 +182,7 @@ def run_penalty_job(
     metrics = evaluate_policy(
         model=model,
         train_vec_env=train_vec_env,
+        build_eval_env_fn=build_eval_env_fn,
         historical_data=historical_data,
         capacity=int(capacity),
         eval_seed=int(eval_seed),
@@ -193,6 +201,7 @@ def run_penalty_job(
     episode_accepted = float(metrics["episode_accepted"])
 
     row: dict[str, float | int | str] = {
+        "algo": str(algo),
         "penalty_scale_mode": str(mode),
         "capacity": int(capacity),
         "train_seed": int(train_seed),
@@ -211,6 +220,11 @@ def run_penalty_job(
 
 def main() -> None:
     args = parse_args()
+    runner = get_algorithm_runner(args.algo)
+    algo_config = runner["config"]
+    train_seed = int(algo_config.seed if args.train_seed is None else args.train_seed)
+    eval_seed = int(train_seed + 100 if args.eval_seed is None else args.eval_seed)
+    total_timesteps = int(algo_config.total_timesteps if args.total_timesteps is None else args.total_timesteps)
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     experiment_root = PATH_CONFIG.output_root / "experiments" / f"{args.run_prefix}_{timestamp}"
     plot_dir = experiment_root / "plots"
@@ -227,12 +241,13 @@ def main() -> None:
     if max_workers == 1:
         for mode, capacity in jobs:
             row = run_penalty_job(
+                algo=str(args.algo),
                 capacity=int(capacity),
                 mode=str(mode),
                 historical_data=historical_data,
-                train_seed=int(args.train_seed),
-                eval_seed=int(args.eval_seed),
-                total_timesteps=int(args.total_timesteps),
+                train_seed=train_seed,
+                eval_seed=eval_seed,
+                total_timesteps=total_timesteps,
                 base_penalty=float(args.base_penalty),
                 penalty_capacity_ref=int(args.penalty_capacity_ref),
                 no_progress_bar=bool(args.no_progress_bar),
@@ -249,12 +264,13 @@ def main() -> None:
             future_to_job = {
                 executor.submit(
                     run_penalty_job,
+                    str(args.algo),
                     int(capacity),
                     str(mode),
                     None,
-                    int(args.train_seed),
-                    int(args.eval_seed),
-                    int(args.total_timesteps),
+                    train_seed,
+                    eval_seed,
+                    total_timesteps,
                     float(args.base_penalty),
                     int(args.penalty_capacity_ref),
                     bool(args.no_progress_bar),
@@ -285,9 +301,10 @@ def main() -> None:
     summary = {
         "modes": modes,
         "capacities": capacities,
-        "train_seed": int(args.train_seed),
-        "eval_seed": int(args.eval_seed),
-        "total_timesteps": int(args.total_timesteps),
+        "algo": str(args.algo),
+        "train_seed": train_seed,
+        "eval_seed": eval_seed,
+        "total_timesteps": total_timesteps,
         "base_penalty": float(args.base_penalty),
         "penalty_capacity_ref": int(args.penalty_capacity_ref),
         "max_workers": max_workers,

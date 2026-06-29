@@ -9,7 +9,7 @@
             "name": "Debugger train_ppo.py (Main)",
             "type": "debugpy",
             "request": "launch",
-            "program": "${workspaceFolder}/train_ppo.py",
+            "program": "${workspaceFolder}/experiments/experiment_train_ppo.py",
             "args": [],
             "console": "integratedTerminal"
         }

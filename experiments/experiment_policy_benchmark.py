@@ -17,10 +17,11 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from configs.config import ENV_CONFIG, PATH_CONFIG, PPO_CONFIG
+from configs.config import ENV_CONFIG, PATH_CONFIG
 from src.environment.abm_customer_model import load_filtered_historical_data
 from src.environment.gym_hotel_env import GymHotelPricingEnv
-from src.training.train_ppo import EpisodeMetricsAggregator, build_eval_env, train_single_run
+from src.training.train_ppo import EpisodeMetricsAggregator
+from src.training.algorithm_registry import get_algorithm_choices, get_algorithm_runner
 
 
 DEFAULT_CAPACITIES = [20, 30, 40, 50, 60]
@@ -62,16 +63,25 @@ PLOT_METRICS = [
     "avg_price_day2_mean",
 ]
 RATIO_METRICS = [
-    "ppo_vs_hard_upper",
-    "ppo_vs_static_grid_best",
-    "ppo_vs_heuristic_best",
+    "learned_vs_hard_upper",
+    "learned_vs_static_grid_best",
+    "learned_vs_heuristic_best",
 ]
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="PPO 两层评估实验：硬上界 + 强基准")
+    parser = argparse.ArgumentParser(description="学习策略两层评估实验：硬上界 + 强基准")
+    parser.add_argument("--algo", type=str, default=None, choices=get_algorithm_choices(), help="单个训练算法")
+    parser.add_argument(
+        "--algos",
+        nargs="+",
+        type=str,
+        default=None,
+        choices=get_algorithm_choices(),
+        help="要一起运行并对比的训练算法列表",
+    )
     parser.add_argument("--capacities", nargs="+", type=int, default=DEFAULT_CAPACITIES, help="要扫描的容量列表")
-    parser.add_argument("--train-seed", type=int, default=int(PPO_CONFIG.seed), help="PPO 训练用随机种子")
+    parser.add_argument("--train-seed", type=int, default=None, help="训练用随机种子，默认使用所选算法配置")
     parser.add_argument(
         "--eval-seeds",
         nargs="+",
@@ -82,8 +92,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--total-timesteps",
         type=int,
-        default=int(PPO_CONFIG.total_timesteps),
-        help="每个容量下 PPO 的训练步数",
+        default=None,
+        help="每个容量下学习策略的训练步数，默认使用所选算法配置",
     )
     parser.add_argument(
         "--price-grid",
@@ -95,7 +105,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--run-prefix",
         type=str,
-        default="ppo_benchmark",
+        default="policy_benchmark",
         help="实验运行名前缀",
     )
     parser.add_argument(
@@ -110,6 +120,14 @@ def parse_args() -> argparse.Namespace:
         help="并行进程数，设为大于 1 时会对不同 capacity 并行训练与评估",
     )
     return parser.parse_args()
+
+
+def resolve_algos(args: argparse.Namespace) -> list[str]:
+    if args.algos:
+        return [str(algo) for algo in args.algos]
+    if args.algo:
+        return [str(args.algo)]
+    return ["ppo"]
 
 
 def prices_to_normalized_action(prices: np.ndarray) -> np.ndarray:
@@ -138,14 +156,15 @@ def summarize_episode_rows(rows: list[dict[str, float]], capacity: int) -> dict[
     return summary
 
 
-def evaluate_ppo_policy(
+def evaluate_learned_policy(
     model,
     train_vec_env,
+    build_eval_env_fn,
     historical_data: pd.DataFrame,
     capacity: int,
     eval_seed: int,
 ) -> dict[str, float]:
-    eval_env = build_eval_env(
+    eval_env = build_eval_env_fn(
         train_vec_env=train_vec_env,
         historical_data=historical_data,
         seed=eval_seed,
@@ -326,35 +345,18 @@ def make_strategy_row(
 
 
 def run_capacity_benchmark_job(
+    algos: list[str],
     capacity: int,
     historical_data: pd.DataFrame | None,
-    train_seed: int,
+    train_seed: int | None,
     eval_seeds: list[int],
-    total_timesteps: int,
+    total_timesteps: int | None,
     no_progress_bar: bool,
     run_prefix: str,
     price_grid: list[float],
-) -> tuple[list[dict[str, float | int | str]], dict[str, float | int | str]]:
+) -> tuple[list[dict[str, float | int | str]], list[dict[str, float | int | str]]]:
     if historical_data is None:
         historical_data = load_filtered_historical_data()
-
-    run_name = f"{run_prefix}_ppo_cap{capacity}"
-    model, train_vec_env, run_dir = train_single_run(
-        run_name=run_name,
-        historical_data=historical_data,
-        capacity=int(capacity),
-        train_seed=int(train_seed),
-        total_timesteps=int(total_timesteps),
-        progress_bar=not bool(no_progress_bar),
-        verbose=1,
-    )
-    ppo_summary, _ = evaluate_policy_over_seeds(
-        lambda seed: evaluate_ppo_policy(model, train_vec_env, historical_data, capacity, seed),
-        eval_seeds,
-        capacity,
-    )
-    train_vec_env.close()
-
     static_summary, static_meta = search_static_grid_best(
         historical_data=historical_data,
         capacity=int(capacity),
@@ -368,52 +370,92 @@ def run_capacity_benchmark_job(
     )
 
     hard_upper_bound = float(ENV_CONFIG.price_max) * float(capacity) * float(ENV_CONFIG.episode_days + 2)
-    strategy_rows = [
-        make_strategy_row(
-            capacity=int(capacity),
-            strategy_name="ppo",
-            summary=ppo_summary,
-            extra={
-                "train_seed": int(train_seed),
-                "eval_seed_count": int(len(eval_seeds)),
-                "run_name": run_name,
-                "run_dir": str(run_dir),
-            },
-        ),
+    strategy_rows: list[dict[str, float | int | str]] = [
         make_strategy_row(
             capacity=int(capacity),
             strategy_name="static_grid_best",
             summary=static_summary,
-            extra=static_meta,
+            extra={"algo": "baseline", **static_meta},
         ),
         make_strategy_row(
             capacity=int(capacity),
             strategy_name="heuristic_best",
             summary=heuristic_summary,
-            extra=heuristic_meta,
+            extra={"algo": "baseline", **heuristic_meta},
         ),
     ]
+    summary_rows: list[dict[str, float | int | str]] = []
 
-    summary_row: dict[str, float | int | str] = {
-        "capacity": int(capacity),
-        "hard_upper_bound": float(hard_upper_bound),
-        "ppo_revenue": float(ppo_summary["episode_revenue_mean"]),
-        "static_grid_best_revenue": float(static_summary["episode_revenue_mean"]),
-        "heuristic_best_revenue": float(heuristic_summary["episode_revenue_mean"]),
-        "ppo_vs_hard_upper": float(ppo_summary["episode_revenue_mean"] / max(1e-8, hard_upper_bound)),
-        "ppo_vs_static_grid_best": float(
-            ppo_summary["episode_revenue_mean"] / max(1e-8, static_summary["episode_revenue_mean"])
-        ),
-        "ppo_vs_heuristic_best": float(
-            ppo_summary["episode_revenue_mean"] / max(1e-8, heuristic_summary["episode_revenue_mean"])
-        ),
-        "best_static_prices": str(static_meta["best_static_prices"]),
-        "heuristic_base_prices": str(heuristic_meta["heuristic_base_prices"]),
-        "heuristic_scarcity_alpha": float(heuristic_meta["heuristic_scarcity_alpha"]),
-        "heuristic_weekend_bonus": float(heuristic_meta["heuristic_weekend_bonus"]),
-        "heuristic_day_premium": float(heuristic_meta["heuristic_day_premium"]),
-    }
-    return strategy_rows, summary_row
+    for algo in algos:
+        runner = get_algorithm_runner(algo)
+        algo_config = runner["config"]
+        train_single_run_fn = runner["train_single_run"]
+        build_eval_env_fn = runner["build_eval_env"]
+        effective_train_seed = int(algo_config.seed if train_seed is None else train_seed)
+        effective_total_timesteps = int(algo_config.total_timesteps if total_timesteps is None else total_timesteps)
+        run_name = f"{run_prefix}_{algo}_cap{capacity}"
+        model, train_vec_env, run_dir = train_single_run_fn(
+            run_name=run_name,
+            historical_data=historical_data,
+            capacity=int(capacity),
+            train_seed=effective_train_seed,
+            total_timesteps=effective_total_timesteps,
+            progress_bar=not bool(no_progress_bar),
+            verbose=1,
+        )
+        learned_summary, _ = evaluate_policy_over_seeds(
+            lambda seed: evaluate_learned_policy(
+                model,
+                train_vec_env,
+                build_eval_env_fn,
+                historical_data,
+                capacity,
+                seed,
+            ),
+            eval_seeds,
+            capacity,
+        )
+        train_vec_env.close()
+
+        strategy_rows.append(
+            make_strategy_row(
+                capacity=int(capacity),
+                strategy_name=str(algo),
+                summary=learned_summary,
+                extra={
+                    "algo": str(algo),
+                    "train_seed": effective_train_seed,
+                    "eval_seed_count": int(len(eval_seeds)),
+                    "run_name": run_name,
+                    "run_dir": str(run_dir),
+                },
+            )
+        )
+        summary_rows.append(
+            {
+                "algo": str(algo),
+                "capacity": int(capacity),
+                "hard_upper_bound": float(hard_upper_bound),
+                "learned_revenue": float(learned_summary["episode_revenue_mean"]),
+                "static_grid_best_revenue": float(static_summary["episode_revenue_mean"]),
+                "heuristic_best_revenue": float(heuristic_summary["episode_revenue_mean"]),
+                "learned_vs_hard_upper": float(learned_summary["episode_revenue_mean"] / max(1e-8, hard_upper_bound)),
+                "learned_vs_static_grid_best": float(
+                    learned_summary["episode_revenue_mean"] / max(1e-8, static_summary["episode_revenue_mean"])
+                ),
+                "learned_vs_heuristic_best": float(
+                    learned_summary["episode_revenue_mean"] / max(1e-8, heuristic_summary["episode_revenue_mean"])
+                ),
+                "best_static_prices": str(static_meta["best_static_prices"]),
+                "heuristic_base_prices": str(heuristic_meta["heuristic_base_prices"]),
+                "heuristic_scarcity_alpha": float(heuristic_meta["heuristic_scarcity_alpha"]),
+                "heuristic_weekend_bonus": float(heuristic_meta["heuristic_weekend_bonus"]),
+                "heuristic_day_premium": float(heuristic_meta["heuristic_day_premium"]),
+                "train_seed": effective_train_seed,
+                "total_timesteps": effective_total_timesteps,
+            }
+        )
+    return strategy_rows, summary_rows
 
 
 def plot_strategy_metric(df: pd.DataFrame, metric: str, output_dir: Path) -> None:
@@ -436,13 +478,15 @@ def plot_strategy_metric(df: pd.DataFrame, metric: str, output_dir: Path) -> Non
 def plot_summary_metric(df: pd.DataFrame, metric: str, output_dir: Path) -> None:
     import matplotlib.pyplot as plt
 
-    ordered = df.sort_values("capacity")
     plt.figure(figsize=(6, 4))
-    plt.plot(ordered["capacity"], ordered[metric], marker="o", linewidth=1.8)
+    for algo, group in df.groupby("algo"):
+        ordered = group.sort_values("capacity")
+        plt.plot(ordered["capacity"], ordered[metric], marker="o", linewidth=1.8, label=str(algo))
     plt.xlabel("capacity")
     plt.ylabel(metric)
     plt.title(f"{metric} vs capacity")
     plt.grid(True, linestyle="--", alpha=0.35)
+    plt.legend()
     plt.tight_layout()
     plt.savefig(output_dir / f"{metric}.png", dpi=160)
     plt.close()
@@ -468,6 +512,7 @@ def plot_full_rate_vs_revenue(df: pd.DataFrame, output_dir: Path) -> None:
 
 def main() -> None:
     args = parse_args()
+    algos = resolve_algos(args)
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     experiment_root = PATH_CONFIG.output_root / "experiments" / f"{args.run_prefix}_{timestamp}"
     plot_dir = experiment_root / "plots"
@@ -484,34 +529,37 @@ def main() -> None:
 
     if max_workers == 1:
         for capacity in capacities:
-            rows, summary = run_capacity_benchmark_job(
+            rows, summaries = run_capacity_benchmark_job(
+                algos=algos,
                 capacity=int(capacity),
                 historical_data=historical_data,
-                train_seed=int(args.train_seed),
+                train_seed=args.train_seed,
                 eval_seeds=eval_seeds,
-                total_timesteps=int(args.total_timesteps),
+                total_timesteps=args.total_timesteps,
                 no_progress_bar=bool(args.no_progress_bar),
                 run_prefix=str(args.run_prefix),
                 price_grid=price_grid,
             )
             strategy_results.extend(rows)
-            capacity_summaries.append(summary)
-            print(
-                f"[capacity={capacity}] ppo={float(summary['ppo_revenue']):.2f}, "
-                f"static={float(summary['static_grid_best_revenue']):.2f}, "
-                f"heuristic={float(summary['heuristic_best_revenue']):.2f}"
-            )
+            capacity_summaries.extend(summaries)
+            for summary in summaries:
+                print(
+                    f"[algo={summary['algo']}, capacity={capacity}] learned={float(summary['learned_revenue']):.2f}, "
+                    f"static={float(summary['static_grid_best_revenue']):.2f}, "
+                    f"heuristic={float(summary['heuristic_best_revenue']):.2f}"
+                )
     else:
         spawn_context = mp.get_context("spawn")
         with ProcessPoolExecutor(max_workers=max_workers, mp_context=spawn_context) as executor:
             future_to_capacity = {
                 executor.submit(
                     run_capacity_benchmark_job,
+                    algos,
                     int(capacity),
                     None,
-                    int(args.train_seed),
+                    args.train_seed,
                     eval_seeds,
-                    int(args.total_timesteps),
+                    args.total_timesteps,
                     bool(args.no_progress_bar),
                     str(args.run_prefix),
                     price_grid,
@@ -520,17 +568,18 @@ def main() -> None:
             }
             for future in as_completed(future_to_capacity):
                 capacity = future_to_capacity[future]
-                rows, summary = future.result()
+                rows, summaries = future.result()
                 strategy_results.extend(rows)
-                capacity_summaries.append(summary)
-                print(
-                    f"[capacity={capacity}] ppo={float(summary['ppo_revenue']):.2f}, "
-                    f"static={float(summary['static_grid_best_revenue']):.2f}, "
-                    f"heuristic={float(summary['heuristic_best_revenue']):.2f}"
-                )
+                capacity_summaries.extend(summaries)
+                for summary in summaries:
+                    print(
+                        f"[algo={summary['algo']}, capacity={capacity}] learned={float(summary['learned_revenue']):.2f}, "
+                        f"static={float(summary['static_grid_best_revenue']):.2f}, "
+                        f"heuristic={float(summary['heuristic_best_revenue']):.2f}"
+                    )
 
     strategy_df = pd.DataFrame(strategy_results).sort_values(["strategy_name", "capacity"]).reset_index(drop=True)
-    summary_df = pd.DataFrame(capacity_summaries).sort_values("capacity").reset_index(drop=True)
+    summary_df = pd.DataFrame(capacity_summaries).sort_values(["algo", "capacity"]).reset_index(drop=True)
     strategy_csv = experiment_root / "strategy_results.csv"
     summary_csv = experiment_root / "capacity_summary.csv"
     strategy_df.to_csv(strategy_csv, index=False)
@@ -544,9 +593,10 @@ def main() -> None:
 
     summary = {
         "capacities": capacities,
-        "train_seed": int(args.train_seed),
+        "algos": algos,
+        "train_seed_override": args.train_seed,
         "eval_seeds": eval_seeds,
-        "total_timesteps": int(args.total_timesteps),
+        "total_timesteps_override": args.total_timesteps,
         "price_grid": price_grid,
         "heuristic_base_options": [list(option) for option in DEFAULT_HEURISTIC_BASES],
         "heuristic_scarcity_alpha_grid": DEFAULT_HEURISTIC_ALPHA,

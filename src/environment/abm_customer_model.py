@@ -14,6 +14,7 @@ class HotelABMModel:
 
     该版本只保留研究模型需要的要素：
     - 工作日 / 周末非平稳到达
+    - 商务型 / 灵活型两类消费者
     - 理想入住日期偏移 d*
     - 支付意愿 WTP
     - 参考价格心理效应
@@ -52,6 +53,16 @@ class HotelABMModel:
     def _sample_ideal_offset(self) -> int:
         return int(self.rng.choice(np.arange(3), p=self.calibration.ideal_offset_probs))
 
+    def _sample_customer_type(self) -> str:
+        is_flexible = self.rng.random() < float(ABM_CONFIG.flexible_customer_share)
+        return "flex" if is_flexible else "biz"
+
+    @staticmethod
+    def _get_day_mismatch_penalty(customer_type: str) -> float:
+        if customer_type == "biz":
+            return float(ABM_CONFIG.lambda_day_mismatch_biz)
+        return float(ABM_CONFIG.lambda_day_mismatch_flex)
+
     def _sample_wtp(self, stay_day: int) -> float:
         if self.is_weekend(stay_day):
             mean = self.calibration.weekend_wtp_mean
@@ -66,6 +77,7 @@ class HotelABMModel:
         *,
         current_day: int,
         customer_id: int,
+        customer_type: str,
         ideal_offset: int,
         wtp: float,
         prices: np.ndarray,
@@ -80,6 +92,7 @@ class HotelABMModel:
             {
                 "current_day": int(current_day),
                 "customer_id": int(customer_id),
+                "customer_type": str(customer_type),
                 "ideal_offset": int(ideal_offset),
                 "wtp": float(wtp),
                 "prices": prices.astype(float).tolist(),
@@ -106,6 +119,8 @@ class HotelABMModel:
         requests = np.zeros(3, dtype=int)
 
         for customer_id in range(arrivals):
+            customer_type = self._sample_customer_type()
+            day_mismatch_penalty = self._get_day_mismatch_penalty(customer_type)
             ideal_offset = self._sample_ideal_offset()
             stay_day = current_day + ideal_offset
             wtp = self._sample_wtp(stay_day)
@@ -113,7 +128,7 @@ class HotelABMModel:
             utilities = (
                 wtp
                 - prices
-                - ABM_CONFIG.lambda_day_mismatch * np.abs(np.arange(3) - ideal_offset)
+                - day_mismatch_penalty * np.abs(np.arange(3) - ideal_offset)
                 + ABM_CONFIG.lambda_reference_price * (reference_prices - prices)
                 + noise
             )
@@ -124,6 +139,7 @@ class HotelABMModel:
                 self._record_trace(
                     current_day=current_day,
                     customer_id=customer_id,
+                    customer_type=customer_type,
                     ideal_offset=ideal_offset,
                     wtp=wtp,
                     prices=prices,
@@ -136,6 +152,7 @@ class HotelABMModel:
                 self._record_trace(
                     current_day=current_day,
                     customer_id=customer_id,
+                    customer_type=customer_type,
                     ideal_offset=ideal_offset,
                     wtp=wtp,
                     prices=prices,

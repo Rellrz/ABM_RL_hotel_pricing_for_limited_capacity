@@ -14,9 +14,10 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from configs.config import PATH_CONFIG, PPO_CONFIG
+from configs.config import PATH_CONFIG
 from src.environment.abm_customer_model import load_filtered_historical_data
-from src.training.train_ppo import EpisodeMetricsAggregator, build_eval_env, train_single_run
+from src.training.train_ppo import EpisodeMetricsAggregator
+from src.training.algorithm_registry import get_algorithm_choices, get_algorithm_runner
 
 
 DEFAULT_CAPACITIES = [20, 30, 40, 50, 60]
@@ -40,14 +41,15 @@ PLOT_METRICS = [
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="容量敏感性分析实验")
+    parser.add_argument("--algo", type=str, default="ppo", choices=get_algorithm_choices(), help="训练算法")
     parser.add_argument("--capacities", nargs="+", type=int, default=DEFAULT_CAPACITIES, help="要扫描的容量列表")
-    parser.add_argument("--train-seed", type=int, default=int(PPO_CONFIG.seed), help="训练用随机种子")
-    parser.add_argument("--eval-seed", type=int, default=int(PPO_CONFIG.seed) + 100, help="评估用新随机种子")
+    parser.add_argument("--train-seed", type=int, default=None, help="训练用随机种子，默认使用所选算法配置")
+    parser.add_argument("--eval-seed", type=int, default=None, help="评估用新随机种子，默认使用 train_seed + 100")
     parser.add_argument(
         "--total-timesteps",
         type=int,
-        default=int(PPO_CONFIG.total_timesteps),
-        help="每个容量的训练步数",
+        default=None,
+        help="每个容量的训练步数，默认使用所选算法配置",
     )
     parser.add_argument(
         "--run-prefix",
@@ -69,8 +71,15 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def evaluate_policy(model, train_vec_env, historical_data: pd.DataFrame, capacity: int, eval_seed: int) -> dict[str, float]:
-    eval_env = build_eval_env(
+def evaluate_policy(
+    model,
+    train_vec_env,
+    build_eval_env_fn,
+    historical_data: pd.DataFrame,
+    capacity: int,
+    eval_seed: int,
+) -> dict[str, float]:
+    eval_env = build_eval_env_fn(
         train_vec_env=train_vec_env,
         historical_data=historical_data,
         seed=eval_seed,
@@ -109,6 +118,7 @@ def plot_metric(df: pd.DataFrame, metric: str, output_dir: Path) -> None:
 
 
 def run_capacity_job(
+    algo: str,
     capacity: int,
     historical_data: pd.DataFrame | None,
     train_seed: int,
@@ -119,8 +129,11 @@ def run_capacity_job(
 ) -> dict[str, float | int | str]:
     if historical_data is None:
         historical_data = load_filtered_historical_data()
-    run_name = f"{run_prefix}_cap{capacity}"
-    model, train_vec_env, run_dir = train_single_run(
+    runner = get_algorithm_runner(algo)
+    train_single_run_fn = runner["train_single_run"]
+    build_eval_env_fn = runner["build_eval_env"]
+    run_name = f"{run_prefix}_{algo}_cap{capacity}"
+    model, train_vec_env, run_dir = train_single_run_fn(
         run_name=run_name,
         historical_data=historical_data,
         capacity=int(capacity),
@@ -132,6 +145,7 @@ def run_capacity_job(
     metrics = evaluate_policy(
         model=model,
         train_vec_env=train_vec_env,
+        build_eval_env_fn=build_eval_env_fn,
         historical_data=historical_data,
         capacity=int(capacity),
         eval_seed=int(eval_seed),
@@ -139,6 +153,7 @@ def run_capacity_job(
     train_vec_env.close()
 
     row: dict[str, float | int | str] = {
+        "algo": str(algo),
         "capacity": int(capacity),
         "train_seed": int(train_seed),
         "eval_seed": int(eval_seed),
@@ -151,6 +166,11 @@ def run_capacity_job(
 
 def main() -> None:
     args = parse_args()
+    runner = get_algorithm_runner(args.algo)
+    algo_config = runner["config"]
+    train_seed = int(algo_config.seed if args.train_seed is None else args.train_seed)
+    eval_seed = int(train_seed + 100 if args.eval_seed is None else args.eval_seed)
+    total_timesteps = int(algo_config.total_timesteps if args.total_timesteps is None else args.total_timesteps)
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     experiment_root = PATH_CONFIG.output_root / "experiments" / f"{args.run_prefix}_{timestamp}"
     plot_dir = experiment_root / "plots"
@@ -164,11 +184,12 @@ def main() -> None:
     if max_workers == 1:
         for capacity in args.capacities:
             row = run_capacity_job(
+                algo=str(args.algo),
                 capacity=int(capacity),
                 historical_data=historical_data,
-                train_seed=int(args.train_seed),
-                eval_seed=int(args.eval_seed),
-                total_timesteps=int(args.total_timesteps),
+                train_seed=train_seed,
+                eval_seed=eval_seed,
+                total_timesteps=total_timesteps,
                 no_progress_bar=bool(args.no_progress_bar),
                 run_prefix=str(args.run_prefix),
             )
@@ -183,11 +204,12 @@ def main() -> None:
             future_to_capacity = {
                 executor.submit(
                     run_capacity_job,
+                    str(args.algo),
                     int(capacity),
                     None,
-                    int(args.train_seed),
-                    int(args.eval_seed),
-                    int(args.total_timesteps),
+                    train_seed,
+                    eval_seed,
+                    total_timesteps,
                     bool(args.no_progress_bar),
                     str(args.run_prefix),
                 ): int(capacity)
@@ -211,9 +233,10 @@ def main() -> None:
 
     summary = {
         "capacities": list(map(int, args.capacities)),
-        "train_seed": int(args.train_seed),
-        "eval_seed": int(args.eval_seed),
-        "total_timesteps": int(args.total_timesteps),
+        "algo": str(args.algo),
+        "train_seed": train_seed,
+        "eval_seed": eval_seed,
+        "total_timesteps": total_timesteps,
         "max_workers": max_workers,
         "results_csv": str(csv_path),
         "plot_dir": str(plot_dir),
