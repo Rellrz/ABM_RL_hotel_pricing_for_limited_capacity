@@ -9,8 +9,8 @@
             "name": "Debugger train_ppo.py (Main)",
             "type": "debugpy",
             "request": "launch",
-            "program": "${workspaceFolder}/experiments/experiment_train_ppo.py",
-            "args": [],
+            "program": "${workspaceFolder}/experiments/experiment_train_single_algo.py",
+            "args": ["--algo", "ppo"],
             "console": "integratedTerminal"
         }
     ]

@@ -201,8 +201,16 @@ def create_model(vec_env, tensorboard_log: Optional[Path] = None, seed: Optional
             "未检测到 stable-baselines3。请先执行 `pip install -r requirements.txt`。"
         ) from exc
 
+    policy_cls: str | type[object]
+    if str(PPO_CONFIG.policy_variant) == "tanh_gaussian":
+        from src.training.tanh_policy import TanhActorCriticPolicy
+
+        policy_cls = TanhActorCriticPolicy
+    else:
+        policy_cls = "MlpPolicy"
+
     return PPO(
-        policy="MlpPolicy",
+        policy=policy_cls,
         env=vec_env,
         learning_rate=float(PPO_CONFIG.learning_rate),
         n_steps=int(PPO_CONFIG.n_steps),
@@ -280,6 +288,7 @@ def train_single_run(
                 "seed": effective_seed,
                 "run_name": effective_run_name,
                 "total_timesteps": effective_timesteps,
+                "policy_variant": str(PPO_CONFIG.policy_variant),
             },
         },
     )

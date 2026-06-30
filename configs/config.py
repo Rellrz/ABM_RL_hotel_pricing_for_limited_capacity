@@ -59,7 +59,7 @@ class EnvConfig:
 
 @dataclass
 class PPOConfig:
-    total_timesteps: int = 512000
+    total_timesteps: int = 800000
     learning_rate: float = 1e-4
     n_steps: int = 128
     batch_size: int = 64
@@ -68,17 +68,18 @@ class PPOConfig:
     gae_lambda: float = 0.95
     clip_range: float = 0.1
     ent_coef: float = 0.01
-    vf_coef: float = 0.5
+    vf_coef: float = 1
     max_grad_norm: float = 0.3
     target_kl: float = 0.02
     actor_net_arch: tuple[int, int] = (128, 128)
-    critic_net_arch: tuple[int, int] = (256, 256)
+    critic_net_arch: tuple[int, int] = (256, 256 ,256)
     seed: int = 42
     device: str = "auto"
     normalize_obs: bool = True
     normalize_reward: bool = True
     reward_clip: float = 10.0
     obs_clip: float = 10.0
+    policy_variant: str = "tanh_gaussian" #standard/tanh_gaussion
     save_name: str = "ppo_idea2_hotel"
     run_name: str = "idea2_ppo"
     log_interval: int = 10
@@ -144,6 +145,8 @@ class ProjectConfig:
             raise ValueError("scarcity_threshold_ratio 必须位于 (0, 1) 内。")
         if self.env.scarcity_penalty_coef < 0.0:
             raise ValueError("scarcity_penalty_coef 不能为负数。")
+        if self.ppo.policy_variant not in {"standard", "tanh_gaussian"}:
+            raise ValueError("ppo.policy_variant 仅支持 'standard' 或 'tanh_gaussian'。")
 
     def setup(self) -> None:
         self.validate()
