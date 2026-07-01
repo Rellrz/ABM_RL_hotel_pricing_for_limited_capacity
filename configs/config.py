@@ -68,7 +68,7 @@ class PPOConfig:
     gae_lambda: float = 0.95
     clip_range: float = 0.1
     ent_coef: float = 0.01
-    vf_coef: float = 1
+    vf_coef: float = 1 #0.5
     max_grad_norm: float = 0.3
     target_kl: float = 0.02
     actor_net_arch: tuple[int, int] = (128, 128)

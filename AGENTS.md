@@ -26,6 +26,12 @@ Add automated tests under `tests/`, mirroring source modules, for example `tests
 
 Create an isolated Python environment before installing dependencies.
 
+On this machine, run project commands through the existing Conda environment:
+
+```bash
+conda run -n abm_new python ...
+```
+
 ```bash
 pip install -r requirements.txt
 python experiments/experiment_train_ppo.py --algo ppo
