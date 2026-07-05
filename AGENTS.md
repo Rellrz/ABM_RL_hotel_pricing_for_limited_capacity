@@ -8,14 +8,18 @@ This repository currently implements the baseline model described in `idea2.md`.
 - `src/environment/`: customer ABM, core hotel simulation, and Gymnasium wrapper.
 - `src/utils/preprocess_data.py`: historical-data loading and demand calibration.
 - `src/training/train_ppo.py`: reusable Stable-Baselines3 PPO trainer implementation.
+- `src/training/beta_policy.py`: PPO actor-critic policy using a Beta action distribution mapped to bounded continuous pricing actions.
+- `src/training/truncated_gaussian_policy.py`: PPO actor-critic policies using truncated Gaussian and scale-adjusted truncated Gaussian action distributions for bounded continuous pricing actions.
 - `src/training/train_sac.py`: reusable Stable-Baselines3 SAC trainer implementation with bounded continuous actions handled by the algorithm.
-- `src/training/algorithm_registry.py`: central algorithm registry that maps `ppo` / `sac` to their training and evaluation builders.
-- `experiments/experiment_train_ppo.py`: simple single-run training entry point; now supports `--algo`.
-- `experiments/experiment_train_sac.py`: simple single-run training entry point; now supports `--algo`.
+- `src/training/algorithm_registry.py`: central algorithm registry that exposes `ppo_standard`, `ppo_tanh_gaussian`, `ppo_truncated_gaussian`, `ppo_scale_adjusted_truncated_gaussian`, `ppo_beta`, and `sac` as independent experiment algorithms.
+- `src/baseline/pricing_baselines.py`: reusable static, weekday/weekend static, and inventory-protection baseline policies and search helpers.
+- `experiments/experiment_train_single_algo.py`: simple single-run training entry point; supports `--algo`.
 - `experiments/experiment_capacity_sensitivity.py`: capacity sensitivity experiment entry point with training, evaluation, CSV export, and single-metric plots. It supports multi-process execution across capacities and `--algo`.
 - `experiments/experiment_penalty_scaling.py`: penalty scaling experiment entry point; supports `--algo`.
 - `experiments/experiment_penalty_ablation.py`: penalty ablation experiment entry point; supports `--algo`.
-- `experiments/experiment_ppo_benchmark.py`: learned-policy benchmark entry point for hard upper bound plus strong baselines. Despite the legacy filename, it now supports both `--algo` and `--algos` for multi-algorithm comparison in one run.
+- `experiments/experiment_policy_benchmark.py`: learned-policy benchmark entry point for hard upper bound plus strong baselines; supports both `--algo` and `--algos` for multi-algorithm comparison in one run.
+- `experiments/experiment_dynamic_baseline_diagnostics.py`: baseline-only diagnostic entry point for testing whether global static, weekday/weekend static, or inventory-protection policies reveal dynamic pricing room.
+- `experiments/experiment_mechanism_diagnostics.py`: mechanism-grid diagnostic entry point that sweeps `flexible_customer_share`, `lambda_day_mismatch_flex`, and capacity without training RL policies.
 - `train_ppo.py`: thin compatibility wrapper that forwards to `src/training/train_ppo.py`.
 - `datasets/`: source dataset and exploratory notebook.
 - `outputs/`: generated models, experiment summaries, and TensorBoard logs; avoid committing new run artifacts unless required for reproducibility.
@@ -34,13 +38,15 @@ conda run -n abm_new python ...
 
 ```bash
 pip install -r requirements.txt
-python experiments/experiment_train_ppo.py --algo ppo
-python experiments/experiment_train_sac.py --algo sac
-python experiments/experiment_capacity_sensitivity.py --algo ppo --capacities 20 30 40 50 60
-python experiments/experiment_capacity_sensitivity.py --algo sac --capacities 20 30 40 50 60
-python experiments/experiment_ppo_benchmark.py --algos ppo sac --max-workers 5
+conda run -n abm_new python experiments/experiment_train_single_algo.py --algo ppo_tanh_gaussian
+conda run -n abm_new python experiments/experiment_train_single_algo.py --algo sac
+conda run -n abm_new python experiments/experiment_capacity_sensitivity.py --algo ppo_tanh_gaussian --capacities 20 30 40 50 60
+conda run -n abm_new python experiments/experiment_capacity_sensitivity.py --algo sac --capacities 20 30 40 50 60
+conda run -n abm_new python experiments/experiment_policy_benchmark.py --algos ppo_tanh_gaussian sac --max-workers 5
+conda run -n abm_new python experiments/experiment_dynamic_baseline_diagnostics.py --max-workers 5
+conda run -n abm_new python experiments/experiment_mechanism_diagnostics.py --max-workers 6
 tensorboard --logdir outputs/tensorboard
-python -m compileall -q configs src experiments train_ppo.py
+conda run -n abm_new python -m compileall -q configs src experiments train_ppo.py
 ```
 
 The training commands use the active values in `configs/config.py`. For quick validation, temporarily reduce `total_timesteps` and `episode_days`, but do not commit debug-only values. When an experiment script supports both `--algo` and `--algos`, prefer `--algos` only for benchmarks or direct cross-algorithm comparison; use `--algo` for simpler single-algorithm sweeps.
@@ -48,7 +54,7 @@ The training commands use the active values in `configs/config.py`. For quick va
 When tests are added, run them with:
 
 ```bash
-python -m pytest -q
+conda run -n abm_new python -m pytest -q
 ```
 
 ## Coding Style & Naming Conventions
@@ -68,6 +74,7 @@ Additional collaboration and implementation rules:
 - When requirements are ambiguous, ask clarifying questions before writing code.
 - If a change will touch more than 3 files, first split the work into smaller tasks and align on that breakdown.
 - After each user correction, reflect on the cause and state a concrete plan to avoid repeating the same mistake.
+- Keep this `AGENTS.md` file current. When project structure, canonical commands, experiment entry points, environment assumptions, or collaboration rules change, update `AGENTS.md` in the same task so future work starts from the correct shared context.
 
 When running capacity experiments, prefer `ProcessPoolExecutor`-style multi-process parallelism over threads. These runs are CPU-heavy because each worker launches a full RL training loop and environment simulation.
 
@@ -88,6 +95,10 @@ Separate empirical calibration from scenario assumptions. Document demand multip
 For routine research iteration, prefer changing `configs/config.py`, experiment script arguments, or explicit experiment-level overrides before modifying files under `src/`. Only change `src/` when the current code path cannot express the intended experiment through parameters alone, or when fixing a confirmed modeling/implementation bug. When `src/` changes are necessary, keep them minimal, explain why parameter-only control was insufficient, and avoid mixing reusable logic changes with one-off experimental tuning.
 
 For algorithm experimentation, prefer adding new trainers behind `src/training/algorithm_registry.py` and reusing the shared `train_single_run` / `build_eval_env` interface rather than hard-coding `if algo == ...` branches throughout experiment scripts. Keep experiment outputs algorithm-labeled in run names, CSV rows, and summary files.
+
+For PPO action-distribution experiments, use the independent algorithm names exposed by `src/training/algorithm_registry.py`: `ppo_standard`, `ppo_tanh_gaussian`, `ppo_truncated_gaussian`, `ppo_scale_adjusted_truncated_gaussian`, and `ppo_beta`. The registry wrappers set `PPOConfig.policy_variant` for each run; experiment scripts should not manually mutate `PPO_CONFIG.policy_variant`. Treat `ppo_tanh_gaussian` as the squashed/logit-normal-style bounded policy, `ppo_truncated_gaussian` / `ppo_scale_adjusted_truncated_gaussian` as the truncated-normal alternatives, and `ppo_beta` as the bounded Beta-distribution alternative for diagnosing boundary-action bias.
+
+For baseline experimentation, keep reusable pricing policies and search helpers under `src/baseline/`. Experiment scripts should orchestrate scenarios, outputs, and plots, but should not duplicate baseline policy implementations.
 
 For the benchmark script, note that multi-process runs with `--max-workers > 1` may not show Stable-Baselines3's per-worker progress bars cleanly in the main terminal. In the current multi-algorithm benchmark, each worker computes baseline searches before launching RL training, so visible training progress may appear delayed even when training is running correctly.
 

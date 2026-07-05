@@ -127,7 +127,7 @@ def resolve_algos(args: argparse.Namespace) -> list[str]:
         return [str(algo) for algo in args.algos]
     if args.algo:
         return [str(args.algo)]
-    return ["ppo"]
+    return ["ppo_tanh_gaussian"]
 
 
 def prices_to_normalized_action(prices: np.ndarray) -> np.ndarray:

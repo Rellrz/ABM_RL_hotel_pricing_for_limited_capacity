@@ -43,7 +43,7 @@ PLOT_METRICS = [
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="有无 penalty 的最小对照实验")
-    parser.add_argument("--algo", type=str, default="ppo", choices=get_algorithm_choices(), help="训练算法")
+    parser.add_argument("--algo", type=str, default="ppo_tanh_gaussian", choices=get_algorithm_choices(), help="训练算法")
     parser.add_argument("--capacities", nargs="+", type=int, default=DEFAULT_CAPACITIES, help="要扫描的容量列表")
     parser.add_argument("--modes", nargs="+", type=str, default=DEFAULT_MODES, help="对照模式列表")
     parser.add_argument("--train-seed", type=int, default=None, help="训练用随机种子，默认使用所选算法配置")

@@ -194,20 +194,49 @@ def create_tensorboard_callback():
 
 
 def create_model(vec_env, tensorboard_log: Optional[Path] = None, seed: Optional[int] = None, verbose: int = 1):
-    try:
-        from stable_baselines3 import PPO
-    except ModuleNotFoundError as exc:  # pragma: no cover
-        raise ModuleNotFoundError(
-            "未检测到 stable-baselines3。请先执行 `pip install -r requirements.txt`。"
-        ) from exc
+    
+    from stable_baselines3 import PPO
 
+    policy_variant = str(PPO_CONFIG.policy_variant)
     policy_cls: str | type[object]
-    if str(PPO_CONFIG.policy_variant) == "tanh_gaussian":
+    if policy_variant == "tanh_gaussian":
         from src.training.tanh_policy import TanhActorCriticPolicy
 
         policy_cls = TanhActorCriticPolicy
+    elif policy_variant == "truncated_gaussian":
+        from src.training.truncated_gaussian_policy import TruncatedGaussianActorCriticPolicy
+
+        policy_cls = TruncatedGaussianActorCriticPolicy
+    elif policy_variant == "scale_adjusted_truncated_gaussian":
+        from src.training.truncated_gaussian_policy import ScaleAdjustedTruncatedGaussianActorCriticPolicy
+
+        policy_cls = ScaleAdjustedTruncatedGaussianActorCriticPolicy
+    elif policy_variant == "beta":
+        from src.training.beta_policy import BetaActorCriticPolicy
+
+        policy_cls = BetaActorCriticPolicy
     else:
         policy_cls = "MlpPolicy"
+
+    policy_kwargs: dict[str, Any] = {
+        "net_arch": {
+            "pi": list(PPO_CONFIG.actor_net_arch),
+            "vf": list(PPO_CONFIG.critic_net_arch),
+        }
+    }
+    if policy_variant == "scale_adjusted_truncated_gaussian":
+        policy_kwargs.update(
+            {
+                "scale_adjustment_k": float(PPO_CONFIG.truncated_gaussian_k),
+                "scale_adjustment_d_min": float(PPO_CONFIG.truncated_gaussian_d_min),
+            }
+        )
+    elif policy_variant == "beta":
+        policy_kwargs.update(
+            {
+                "beta_min_concentration": float(PPO_CONFIG.beta_min_concentration),
+            }
+        )
 
     return PPO(
         policy=policy_cls,
@@ -224,12 +253,7 @@ def create_model(vec_env, tensorboard_log: Optional[Path] = None, seed: Optional
         max_grad_norm=float(PPO_CONFIG.max_grad_norm),
         target_kl=float(PPO_CONFIG.target_kl),
         tensorboard_log=str(PATH_CONFIG.tensorboard_dir if tensorboard_log is None else tensorboard_log),
-        policy_kwargs={
-            "net_arch": {
-                "pi": list(PPO_CONFIG.actor_net_arch),
-                "vf": list(PPO_CONFIG.critic_net_arch),
-            }
-        },
+        policy_kwargs=policy_kwargs,
         seed=int(PPO_CONFIG.seed if seed is None else seed),
         device=str(PPO_CONFIG.device),
         verbose=int(verbose),
@@ -289,6 +313,9 @@ def train_single_run(
                 "run_name": effective_run_name,
                 "total_timesteps": effective_timesteps,
                 "policy_variant": str(PPO_CONFIG.policy_variant),
+                "truncated_gaussian_k": float(PPO_CONFIG.truncated_gaussian_k),
+                "truncated_gaussian_d_min": float(PPO_CONFIG.truncated_gaussian_d_min),
+                "beta_min_concentration": float(PPO_CONFIG.beta_min_concentration),
             },
         },
     )

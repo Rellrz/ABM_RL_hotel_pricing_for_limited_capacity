@@ -33,9 +33,10 @@ def main() -> None:
     runner = get_algorithm_runner(args.algo)
     algo_config = runner["config"]
     train_single_run = runner["train_single_run"]
+    default_run_name = str(runner.get("default_run_name", algo_config.run_name))
     historical_data = load_filtered_historical_data()
     _, vec_env, run_dir = train_single_run(
-        run_name=str(algo_config.run_name if args.run_name is None else args.run_name),
+        run_name=str(default_run_name if args.run_name is None else args.run_name),
         historical_data=historical_data,
         capacity=CONFIG.env.capacity,
         train_seed=int(algo_config.seed if args.train_seed is None else args.train_seed),
