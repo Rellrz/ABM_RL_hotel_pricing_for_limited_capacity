@@ -59,11 +59,11 @@ class EnvConfig:
 
 @dataclass
 class PPOConfig:
-    total_timesteps: int = 800000
+    total_timesteps: int = 1600000
     learning_rate: float = 1e-4
-    n_steps: int = 128
-    batch_size: int = 64
-    n_epochs: int = 10
+    n_steps: int = 128 #128
+    batch_size: int = 64 #64
+    n_epochs: int = 10 #10
     gamma: float = 0.99
     gae_lambda: float = 0.95
     clip_range: float = 0.1
@@ -82,7 +82,8 @@ class PPOConfig:
     policy_variant: str = "tanh_gaussian"  # standard/tanh_gaussian/truncated_gaussian/scale_adjusted_truncated_gaussian/beta
     truncated_gaussian_k: float = 2.0
     truncated_gaussian_d_min: float = 0.01
-    beta_min_concentration: float = 1.0
+    #控制 Beta 分布的 alpha/beta 最小形状参数
+    beta_min_concentration: float = 0.5 #1
     save_name: str = "ppo_idea2_hotel"
     run_name: str = "idea2_ppo"
     log_interval: int = 10

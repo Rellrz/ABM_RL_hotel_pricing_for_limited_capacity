@@ -18,6 +18,7 @@ This repository currently implements the baseline model described in `idea2.md`.
 - `experiments/experiment_penalty_scaling.py`: penalty scaling experiment entry point; supports `--algo`.
 - `experiments/experiment_penalty_ablation.py`: penalty ablation experiment entry point; supports `--algo`.
 - `experiments/experiment_policy_benchmark.py`: learned-policy benchmark entry point for hard upper bound plus strong baselines; supports both `--algo` and `--algos` for multi-algorithm comparison in one run.
+- `experiments/experiment_scenario_policy_training.py`: explicit scenario-list training benchmark for selected dynamic-pricing-room scenarios; reads `configs/scenario_policy_training_scenarios.json`, trains one or more `--algos`, evaluates strong static and inventory-protection baselines, and exports per-seed test rows plus summary CSVs.
 - `experiments/experiment_dynamic_baseline_diagnostics.py`: baseline-only diagnostic entry point for testing whether global static, weekday/weekend static, or inventory-protection policies reveal dynamic pricing room.
 - `experiments/experiment_mechanism_diagnostics.py`: mechanism-grid diagnostic entry point that sweeps `flexible_customer_share`, `lambda_day_mismatch_flex`, and capacity without training RL policies.
 - `train_ppo.py`: thin compatibility wrapper that forwards to `src/training/train_ppo.py`.
@@ -43,6 +44,7 @@ conda run -n abm_new python experiments/experiment_train_single_algo.py --algo s
 conda run -n abm_new python experiments/experiment_capacity_sensitivity.py --algo ppo_tanh_gaussian --capacities 20 30 40 50 60
 conda run -n abm_new python experiments/experiment_capacity_sensitivity.py --algo sac --capacities 20 30 40 50 60
 conda run -n abm_new python experiments/experiment_policy_benchmark.py --algos ppo_tanh_gaussian sac --max-workers 5
+conda run -n abm_new python experiments/experiment_scenario_policy_training.py --scenario-file configs/scenario_policy_training_scenarios.json --algos sac ppo_tanh_gaussian ppo_beta --max-workers 3
 conda run -n abm_new python experiments/experiment_dynamic_baseline_diagnostics.py --max-workers 5
 conda run -n abm_new python experiments/experiment_mechanism_diagnostics.py --max-workers 6
 tensorboard --logdir outputs/tensorboard
@@ -95,6 +97,8 @@ Separate empirical calibration from scenario assumptions. Document demand multip
 For routine research iteration, prefer changing `configs/config.py`, experiment script arguments, or explicit experiment-level overrides before modifying files under `src/`. Only change `src/` when the current code path cannot express the intended experiment through parameters alone, or when fixing a confirmed modeling/implementation bug. When `src/` changes are necessary, keep them minimal, explain why parameter-only control was insufficient, and avoid mixing reusable logic changes with one-off experimental tuning.
 
 For algorithm experimentation, prefer adding new trainers behind `src/training/algorithm_registry.py` and reusing the shared `train_single_run` / `build_eval_env` interface rather than hard-coding `if algo == ...` branches throughout experiment scripts. Keep experiment outputs algorithm-labeled in run names, CSV rows, and summary files.
+
+For selected mechanism scenarios, prefer `experiments/experiment_scenario_policy_training.py` with an explicit JSON scenario list over ad hoc Cartesian grids. Keep `eval_episode_results.csv` for per-seed test diagnostics, `strategy_results.csv` for mean/std strategy metrics, and `scenario_summary.csv` for learned-vs-baseline comparisons.
 
 For PPO action-distribution experiments, use the independent algorithm names exposed by `src/training/algorithm_registry.py`: `ppo_standard`, `ppo_tanh_gaussian`, `ppo_truncated_gaussian`, `ppo_scale_adjusted_truncated_gaussian`, and `ppo_beta`. The registry wrappers set `PPOConfig.policy_variant` for each run; experiment scripts should not manually mutate `PPO_CONFIG.policy_variant`. Treat `ppo_tanh_gaussian` as the squashed/logit-normal-style bounded policy, `ppo_truncated_gaussian` / `ppo_scale_adjusted_truncated_gaussian` as the truncated-normal alternatives, and `ppo_beta` as the bounded Beta-distribution alternative for diagnosing boundary-action bias.
 
