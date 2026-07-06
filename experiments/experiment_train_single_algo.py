@@ -9,7 +9,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from configs.config import CONFIG, PATH_CONFIG
-from src.environment.abm_customer_model import load_filtered_historical_data
+from src.environment.abm_customer_model import load_train_historical_data
 from src.training.algorithm_registry import get_algorithm_choices, get_algorithm_runner
 
 
@@ -34,7 +34,7 @@ def main() -> None:
     algo_config = runner["config"]
     train_single_run = runner["train_single_run"]
     default_run_name = str(runner.get("default_run_name", algo_config.run_name))
-    historical_data = load_filtered_historical_data()
+    historical_data = load_train_historical_data()
     _, vec_env, run_dir = train_single_run(
         run_name=str(default_run_name if args.run_name is None else args.run_name),
         historical_data=historical_data,

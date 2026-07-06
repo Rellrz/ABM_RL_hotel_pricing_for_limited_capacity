@@ -17,7 +17,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from configs.config import ABM_CONFIG, ENV_CONFIG, PATH_CONFIG
+from configs.config import ABM_CONFIG, DATA_CONFIG, ENV_CONFIG, PATH_CONFIG
 from src.baseline.pricing_baselines import (
     DEFAULT_PRICE_GRID,
     add_derived_metrics,
@@ -28,7 +28,8 @@ from src.baseline.pricing_baselines import (
     search_inventory_protection_best,
     summarize_episode_rows,
 )
-from src.environment.abm_customer_model import load_filtered_historical_data
+from src.environment.abm_customer_model import load_eval_historical_data, load_train_historical_data
+from src.utils.preprocess_data import data_years_label, get_data_split_metadata
 from src.training.algorithm_registry import get_algorithm_choices, get_algorithm_runner
 from src.training.train_ppo import EpisodeMetricsAggregator
 
@@ -162,6 +163,8 @@ def scenario_fields(scenario: ScenarioSpec) -> dict[str, float | int | str]:
         "capacity": int(scenario.capacity),
         "flexible_customer_share": float(scenario.flexible_customer_share),
         "lambda_day_mismatch_flex": float(scenario.lambda_day_mismatch_flex),
+        "train_years": data_years_label(DATA_CONFIG.train_years),
+        "eval_years": data_years_label(DATA_CONFIG.eval_years),
     }
 
 
@@ -304,28 +307,30 @@ def run_scenario_job(
         flexible_customer_share=float(scenario_payload["flexible_customer_share"]),
         lambda_day_mismatch_flex=float(scenario_payload["lambda_day_mismatch_flex"]),
     )
-    historical_data = load_filtered_historical_data()
+    train_historical_data = load_train_historical_data()
+    eval_historical_data = load_eval_historical_data()
     eval_seeds = list(map(int, eval_seeds))
 
     with apply_abm_scenario(scenario):
         ranked_static = rank_static_candidates(
-            historical_data=historical_data,
+            historical_data=train_historical_data,
             capacity=int(scenario.capacity),
             eval_seeds=eval_seeds,
             price_grid=list(map(float, price_grid)),
         )
-        _, best_static_prices, static_summary = ranked_static[0]
+        _, best_static_prices, _ = ranked_static[0]
         static_policy = get_static_policy(best_static_prices)
         static_rows = [
-            evaluate_manual_policy(static_policy, historical_data, int(scenario.capacity), seed)
+            evaluate_manual_policy(static_policy, eval_historical_data, int(scenario.capacity), seed)
             for seed in eval_seeds
         ]
+        static_summary = summarize_episode_rows(static_rows, int(scenario.capacity))
         static_meta = {"best_static_prices": json.dumps(list(map(float, best_static_prices)), ensure_ascii=False)}
 
         candidate_count = max(1, min(int(baseline_top_k), len(ranked_static)))
         candidate_prices = [prices for _, prices, _ in ranked_static[:candidate_count]]
-        inventory_summary, inventory_meta = search_inventory_protection_best(
-            historical_data=historical_data,
+        _, inventory_meta = search_inventory_protection_best(
+            historical_data=train_historical_data,
             capacity=int(scenario.capacity),
             eval_seeds=eval_seeds,
             candidate_prices=candidate_prices,
@@ -338,9 +343,10 @@ def run_scenario_job(
             capacity=int(scenario.capacity),
         )
         inventory_rows = [
-            evaluate_manual_policy(inventory_policy, historical_data, int(scenario.capacity), seed)
+            evaluate_manual_policy(inventory_policy, eval_historical_data, int(scenario.capacity), seed)
             for seed in eval_seeds
         ]
+        inventory_summary = summarize_episode_rows(inventory_rows, int(scenario.capacity))
 
         episode_rows: list[dict[str, Any]] = []
         strategy_rows: list[dict[str, Any]] = [
@@ -398,7 +404,7 @@ def run_scenario_job(
             run_name = f"{run_prefix}_{scenario.scenario_name}_{algo}"
             model, train_vec_env, run_dir = train_single_run_fn(
                 run_name=run_name,
-                historical_data=historical_data,
+                historical_data=train_historical_data,
                 capacity=int(scenario.capacity),
                 train_seed=effective_train_seed,
                 total_timesteps=effective_total_timesteps,
@@ -410,7 +416,7 @@ def run_scenario_job(
                     model=model,
                     train_vec_env=train_vec_env,
                     build_eval_env_fn=build_eval_env_fn,
-                    historical_data=historical_data,
+                    historical_data=eval_historical_data,
                     scenario=scenario,
                     eval_seed=seed,
                 )
@@ -485,6 +491,7 @@ def main() -> None:
     algos = [str(algo) for algo in args.algos]
     eval_seeds = list(map(int, args.eval_seeds))
     price_grid = list(map(float, args.price_grid))
+    split_metadata = get_data_split_metadata()
     max_workers = max(1, int(args.max_workers))
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     experiment_root = PATH_CONFIG.output_root / "experiments" / f"{args.run_prefix}_{timestamp}"
@@ -590,6 +597,7 @@ def main() -> None:
         "total_timesteps_override": args.total_timesteps,
         "price_grid": price_grid,
         "baseline_top_k": int(args.baseline_top_k),
+        **split_metadata,
         "max_workers": max_workers,
         "episode_results_csv": str(episode_csv),
         "strategy_results_csv": str(strategy_csv),

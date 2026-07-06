@@ -16,7 +16,8 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from configs.config import ABM_CONFIG, PATH_CONFIG
-from src.environment.abm_customer_model import load_filtered_historical_data
+from src.environment.abm_customer_model import load_eval_historical_data, load_train_historical_data
+from src.utils.preprocess_data import get_data_split_metadata
 from experiments.experiment_dynamic_baseline_diagnostics import (
     DEFAULT_PRICE_GRID,
     PLOT_METRICS,
@@ -88,13 +89,16 @@ def run_mechanism_job(
     flexible_customer_share: float,
     lambda_day_mismatch_flex: float,
     capacity: int,
-    historical_data: pd.DataFrame | None,
+    train_historical_data: pd.DataFrame | None,
+    eval_historical_data: pd.DataFrame | None,
     eval_seeds: list[int],
     price_grid: list[float],
     weekday_weekend_candidates: int,
 ) -> tuple[list[dict[str, float | int | str]], dict[str, float | int | str]]:
-    if historical_data is None:
-        historical_data = load_filtered_historical_data()
+    if train_historical_data is None:
+        train_historical_data = load_train_historical_data()
+    if eval_historical_data is None:
+        eval_historical_data = load_eval_historical_data()
 
     with apply_abm_overrides(
         flexible_customer_share=float(flexible_customer_share),
@@ -102,7 +106,8 @@ def run_mechanism_job(
     ):
         strategy_rows, summary = run_capacity_job(
             capacity=int(capacity),
-            historical_data=historical_data,
+            train_historical_data=train_historical_data,
+            eval_historical_data=eval_historical_data,
             eval_seeds=list(map(int, eval_seeds)),
             price_grid=list(map(float, price_grid)),
             weekday_weekend_candidates=int(weekday_weekend_candidates),
@@ -160,7 +165,9 @@ def main() -> None:
     price_grid = list(map(float, args.price_grid))
     max_workers = max(1, int(args.max_workers))
     weekday_weekend_candidates = int(args.weekday_weekend_candidates)
-    historical_data = load_filtered_historical_data()
+    train_historical_data = load_train_historical_data()
+    eval_historical_data = load_eval_historical_data()
+    split_metadata = get_data_split_metadata(train_historical_data, eval_historical_data)
 
     jobs = [
         (flexible_customer_share, lambda_day_mismatch_flex, capacity)
@@ -179,7 +186,8 @@ def main() -> None:
                 flexible_customer_share=float(flexible_customer_share),
                 lambda_day_mismatch_flex=float(lambda_day_mismatch_flex),
                 capacity=int(capacity),
-                historical_data=historical_data,
+                train_historical_data=train_historical_data,
+                eval_historical_data=eval_historical_data,
                 eval_seeds=eval_seeds,
                 price_grid=price_grid,
                 weekday_weekend_candidates=weekday_weekend_candidates,
@@ -200,6 +208,7 @@ def main() -> None:
                     float(flexible_customer_share),
                     float(lambda_day_mismatch_flex),
                     int(capacity),
+                    None,
                     None,
                     eval_seeds,
                     price_grid,
@@ -246,6 +255,7 @@ def main() -> None:
         "lambda_day_mismatch_flex": lambda_day_mismatch_flex_values,
         "price_grid": price_grid,
         "weekday_weekend_candidate_count": weekday_weekend_candidates,
+        **split_metadata,
         "max_workers": max_workers,
         "strategy_results_csv": str(strategy_csv),
         "capacity_summary_csv": str(summary_csv),

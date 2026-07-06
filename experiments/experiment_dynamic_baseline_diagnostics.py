@@ -13,15 +13,21 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from configs.config import PATH_CONFIG
+from configs.config import DATA_CONFIG, PATH_CONFIG
 from src.baseline.pricing_baselines import (
     DEFAULT_INVENTORY_ALPHA,
     DEFAULT_PRICE_GRID,
+    evaluate_manual_policy,
+    get_inventory_protection_policy,
+    get_static_policy,
+    get_weekday_weekend_static_policy,
     rank_static_candidates,
     search_inventory_protection_best,
     search_weekday_weekend_static_best,
+    summarize_episode_rows,
 )
-from src.environment.abm_customer_model import load_filtered_historical_data
+from src.environment.abm_customer_model import load_eval_historical_data, load_train_historical_data
+from src.utils.preprocess_data import data_years_label, get_data_split_metadata
 
 
 DEFAULT_CAPACITIES = [20, 30, 40, 50, 60]
@@ -71,6 +77,8 @@ def make_strategy_row(
 ) -> dict[str, float | int | str]:
     row: dict[str, float | int | str] = {
         "capacity": int(capacity),
+        "train_years": data_years_label(DATA_CONFIG.train_years),
+        "eval_years": data_years_label(DATA_CONFIG.eval_years),
         "strategy_name": str(strategy_name),
     }
     row.update(summary)
@@ -81,38 +89,69 @@ def make_strategy_row(
 
 def run_capacity_job(
     capacity: int,
-    historical_data: pd.DataFrame | None,
+    train_historical_data: pd.DataFrame | None,
+    eval_historical_data: pd.DataFrame | None,
     eval_seeds: list[int],
     price_grid: list[float],
     weekday_weekend_candidates: int,
 ) -> tuple[list[dict[str, float | int | str]], dict[str, float | int | str]]:
-    if historical_data is None:
-        historical_data = load_filtered_historical_data()
+    if train_historical_data is None:
+        train_historical_data = load_train_historical_data()
+    if eval_historical_data is None:
+        eval_historical_data = load_eval_historical_data()
 
     ranked_static = rank_static_candidates(
-        historical_data=historical_data,
+        historical_data=train_historical_data,
         capacity=int(capacity),
         eval_seeds=list(map(int, eval_seeds)),
         price_grid=list(map(float, price_grid)),
     )
-    best_static_revenue, best_static_prices, static_summary = ranked_static[0]
+    _, best_static_prices, _ = ranked_static[0]
     candidate_count = max(1, min(int(weekday_weekend_candidates), len(ranked_static)))
     candidate_prices = [prices for _, prices, _ in ranked_static[:candidate_count]]
 
-    weekday_weekend_summary, weekday_weekend_meta = search_weekday_weekend_static_best(
-        historical_data=historical_data,
+    _, weekday_weekend_meta = search_weekday_weekend_static_best(
+        historical_data=train_historical_data,
         capacity=int(capacity),
         eval_seeds=list(map(int, eval_seeds)),
         candidate_prices=candidate_prices,
     )
-    inventory_summary, inventory_meta = search_inventory_protection_best(
-        historical_data=historical_data,
+    _, inventory_meta = search_inventory_protection_best(
+        historical_data=train_historical_data,
         capacity=int(capacity),
         eval_seeds=list(map(int, eval_seeds)),
         candidate_prices=candidate_prices,
     )
 
     static_meta = {"best_static_prices": json.dumps(list(map(float, best_static_prices)), ensure_ascii=False)}
+    static_policy = get_static_policy(tuple(map(float, best_static_prices)))
+    static_rows = [
+        evaluate_manual_policy(static_policy, eval_historical_data, int(capacity), seed)
+        for seed in eval_seeds
+    ]
+    static_summary = summarize_episode_rows(static_rows, int(capacity))
+    best_static_revenue = float(static_summary["episode_revenue_mean"])
+
+    weekday_policy = get_weekday_weekend_static_policy(
+        weekday_prices=tuple(json.loads(str(weekday_weekend_meta["weekday_static_prices"]))),
+        weekend_prices=tuple(json.loads(str(weekday_weekend_meta["weekend_static_prices"]))),
+    )
+    weekday_weekend_rows = [
+        evaluate_manual_policy(weekday_policy, eval_historical_data, int(capacity), seed)
+        for seed in eval_seeds
+    ]
+    weekday_weekend_summary = summarize_episode_rows(weekday_weekend_rows, int(capacity))
+
+    inventory_policy = get_inventory_protection_policy(
+        base_prices=tuple(json.loads(str(inventory_meta["inventory_base_prices"]))),
+        scarcity_alpha=float(inventory_meta["inventory_scarcity_alpha"]),
+        capacity=int(capacity),
+    )
+    inventory_rows = [
+        evaluate_manual_policy(inventory_policy, eval_historical_data, int(capacity), seed)
+        for seed in eval_seeds
+    ]
+    inventory_summary = summarize_episode_rows(inventory_rows, int(capacity))
     strategy_rows = [
         make_strategy_row(
             capacity=int(capacity),
@@ -136,6 +175,8 @@ def run_capacity_job(
 
     summary_row: dict[str, float | int | str] = {
         "capacity": int(capacity),
+        "train_years": data_years_label(DATA_CONFIG.train_years),
+        "eval_years": data_years_label(DATA_CONFIG.eval_years),
         "static_grid_best_revenue": float(best_static_revenue),
         "weekday_weekend_static_best_revenue": float(weekday_weekend_summary["episode_revenue_mean"]),
         "inventory_protection_best_revenue": float(inventory_summary["episode_revenue_mean"]),
@@ -184,7 +225,9 @@ def main() -> None:
     eval_seeds = list(map(int, args.eval_seeds))
     price_grid = list(map(float, args.price_grid))
     max_workers = max(1, int(args.max_workers))
-    historical_data = load_filtered_historical_data()
+    train_historical_data = load_train_historical_data()
+    eval_historical_data = load_eval_historical_data()
+    split_metadata = get_data_split_metadata(train_historical_data, eval_historical_data)
 
     strategy_results: list[dict[str, float | int | str]] = []
     summary_rows: list[dict[str, float | int | str]] = []
@@ -193,7 +236,8 @@ def main() -> None:
         for capacity in capacities:
             rows, summary = run_capacity_job(
                 capacity=int(capacity),
-                historical_data=historical_data,
+                train_historical_data=train_historical_data,
+                eval_historical_data=eval_historical_data,
                 eval_seeds=eval_seeds,
                 price_grid=price_grid,
                 weekday_weekend_candidates=int(args.weekday_weekend_candidates),
@@ -211,6 +255,7 @@ def main() -> None:
                 executor.submit(
                     run_capacity_job,
                     int(capacity),
+                    None,
                     None,
                     eval_seeds,
                     price_grid,
@@ -245,6 +290,7 @@ def main() -> None:
         "price_grid": price_grid,
         "weekday_weekend_candidate_count": int(args.weekday_weekend_candidates),
         "inventory_scarcity_alpha_grid": DEFAULT_INVENTORY_ALPHA,
+        **split_metadata,
         "max_workers": max_workers,
         "strategy_results_csv": str(strategy_csv),
         "capacity_summary_csv": str(summary_csv),

@@ -15,8 +15,9 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from configs.config import ENV_CONFIG, PATH_CONFIG
-from src.environment.abm_customer_model import load_filtered_historical_data
+from configs.config import DATA_CONFIG, ENV_CONFIG, PATH_CONFIG
+from src.environment.abm_customer_model import load_eval_historical_data, load_train_historical_data
+from src.utils.preprocess_data import data_years_label, get_data_split_metadata
 from src.training.train_ppo import EpisodeMetricsAggregator
 from src.training.algorithm_registry import get_algorithm_choices, get_algorithm_runner
 
@@ -190,15 +191,18 @@ def run_ablation_job(
     algo: str,
     capacity: int,
     mode: str,
-    historical_data: pd.DataFrame | None,
+    train_historical_data: pd.DataFrame | None,
+    eval_historical_data: pd.DataFrame | None,
     train_seed: int,
     eval_seed: int,
     total_timesteps: int,
     no_progress_bar: bool,
     run_prefix: str,
 ) -> dict[str, float | int | str]:
-    if historical_data is None:
-        historical_data = load_filtered_historical_data()
+    if train_historical_data is None:
+        train_historical_data = load_train_historical_data()
+    if eval_historical_data is None:
+        eval_historical_data = load_eval_historical_data()
     runner = get_algorithm_runner(algo)
     train_single_run_fn = runner["train_single_run"]
     build_eval_env_fn = runner["build_eval_env"]
@@ -209,7 +213,7 @@ def run_ablation_job(
     with apply_penalty_config(mode):
         model, train_vec_env, run_dir = train_single_run_fn(
             run_name=run_name,
-            historical_data=historical_data,
+            historical_data=train_historical_data,
             capacity=int(capacity),
             train_seed=int(train_seed),
             total_timesteps=int(total_timesteps),
@@ -221,7 +225,7 @@ def run_ablation_job(
             model=model,
             train_vec_env=train_vec_env,
             build_eval_env_fn=build_eval_env_fn,
-            historical_data=historical_data,
+            historical_data=eval_historical_data,
             capacity=int(capacity),
             eval_seed=int(eval_seed),
             env_overrides=env_overrides,
@@ -236,6 +240,8 @@ def run_ablation_job(
         "algo": str(algo),
         "penalty_mode": str(mode),
         "capacity": int(capacity),
+        "train_years": data_years_label(DATA_CONFIG.train_years),
+        "eval_years": data_years_label(DATA_CONFIG.eval_years),
         "train_seed": int(train_seed),
         "eval_seed": int(eval_seed),
         "run_name": run_name,
@@ -263,7 +269,9 @@ def main() -> None:
     experiment_root.mkdir(parents=True, exist_ok=True)
     plot_dir.mkdir(parents=True, exist_ok=True)
 
-    historical_data = load_filtered_historical_data()
+    train_historical_data = load_train_historical_data()
+    eval_historical_data = load_eval_historical_data()
+    split_metadata = get_data_split_metadata(train_historical_data, eval_historical_data)
     results: list[dict[str, float | int | str]] = []
     max_workers = max(1, int(args.max_workers))
     modes = list(args.modes)
@@ -276,7 +284,8 @@ def main() -> None:
                 algo=str(args.algo),
                 capacity=int(capacity),
                 mode=str(mode),
-                historical_data=historical_data,
+                train_historical_data=train_historical_data,
+                eval_historical_data=eval_historical_data,
                 train_seed=train_seed,
                 eval_seed=eval_seed,
                 total_timesteps=total_timesteps,
@@ -298,6 +307,7 @@ def main() -> None:
                     str(args.algo),
                     int(capacity),
                     str(mode),
+                    None,
                     None,
                     train_seed,
                     eval_seed,
@@ -336,6 +346,7 @@ def main() -> None:
         "base_scarcity_penalty_coef": float(ENV_CONFIG.scarcity_penalty_coef),
         "base_penalty_scale_mode": str(ENV_CONFIG.penalty_scale_mode),
         "episode_days": int(ENV_CONFIG.episode_days),
+        **split_metadata,
         "max_workers": max_workers,
         "results_csv": str(csv_path),
         "plot_dir": str(plot_dir),

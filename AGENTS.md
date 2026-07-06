@@ -4,7 +4,7 @@
 
 This repository currently implements the baseline model described in `idea2.md`. The current `idea2` baseline uses a two-segment customer ABM: `biz` customers mostly stick to their ideal stay date, while `flex` customers can shift across the three-day window in response to price. Treat `idea.md` as a future extension, not as part of the current acceptance scope.
 
-- `configs/config.py`: dataclass-based data, ABM, environment, PPO, SAC, and path settings.
+- `configs/config.py`: dataclass-based data, train/eval year split, ABM, environment, PPO, SAC, and path settings.
 - `src/environment/`: customer ABM, core hotel simulation, and Gymnasium wrapper.
 - `src/utils/preprocess_data.py`: historical-data loading and demand calibration.
 - `src/training/train_ppo.py`: reusable Stable-Baselines3 PPO trainer implementation.
@@ -95,6 +95,8 @@ Pull requests should state the research assumption being changed, list affected 
 Separate empirical calibration from scenario assumptions. Document demand multipliers, capacity stress settings, exclusions, train/eval random seeds, and experiment-specific overrides in saved run configuration. Do not silently reinterpret long-lead bookings as arrivals inside the three-day `idea2` window.
 
 For routine research iteration, prefer changing `configs/config.py`, experiment script arguments, or explicit experiment-level overrides before modifying files under `src/`. Only change `src/` when the current code path cannot express the intended experiment through parameters alone, or when fixing a confirmed modeling/implementation bug. When `src/` changes are necessary, keep them minimal, explain why parameter-only control was insufficient, and avoid mixing reusable logic changes with one-off experimental tuning.
+
+The canonical temporal generalization split is configured in `DataConfig`: `train_years=(2016,)` and `eval_years=(2017,)` for City Hotel by default. Training scripts and learned-policy experiments should train on `load_train_historical_data()` and evaluate on `load_eval_historical_data()`. Baseline search/parameter selection should also use the training split, with reported performance evaluated on the eval split, unless an experiment is explicitly labeled as an oracle eval-set benchmark.
 
 For algorithm experimentation, prefer adding new trainers behind `src/training/algorithm_registry.py` and reusing the shared `train_single_run` / `build_eval_env` interface rather than hard-coding `if algo == ...` branches throughout experiment scripts. Keep experiment outputs algorithm-labeled in run names, CSV rows, and summary files.
 

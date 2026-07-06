@@ -24,6 +24,8 @@ class PathConfig:
 @dataclass
 class DataConfig:
     hotel_name: str = "City Hotel"
+    train_years: tuple[int, ...] = (2016,)
+    eval_years: tuple[int, ...] = (2017,)
     max_lead_time: int = 2
     adr_column: str = "adr"
     seed: int = 42
@@ -125,6 +127,10 @@ class ProjectConfig:
     sac: SACConfig = field(default_factory=SACConfig)
 
     def validate(self) -> None:
+        if not self.data.train_years:
+            raise ValueError("data.train_years 至少需要包含一个年份。")
+        if not self.data.eval_years:
+            raise ValueError("data.eval_years 至少需要包含一个年份。")
         if self.abm.window_size != 3:
             raise ValueError("idea2 模型要求滚动窗口固定为 3 天。")
         if not (0.0 <= self.abm.flexible_customer_share <= 1.0):
