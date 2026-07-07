@@ -10,8 +10,41 @@
             "type": "debugpy",
             "request": "launch",
             "program": "${workspaceFolder}/experiments/experiment_train_single_algo.py",
-            "args": ["--algo", "ppo"],
+            "args": ["--algo", "ppo_scale_adjusted_truncated_gaussian"],
+            "console": "integratedTerminal"
+        },
+        {
+            "name": "Debugger train_ppo.py (PPO Standard)",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/experiments/experiment_train_single_algo.py",
+            "args": ["--algo", "ppo_standard"],
+            "console": "integratedTerminal"
+        },
+        {
+            "name": "Debugger train_ppo.py (PPO Beta)",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/experiments/experiment_train_single_algo.py",
+            "args": ["--algo", "ppo_beta"],
+            "console": "integratedTerminal"
+        },
+        {
+            "name": "Debugger train_ppo.py (PPO Tanh Gaussian)",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/experiments/experiment_train_single_algo.py",
+            "args": ["--algo", "ppo_tanh_gaussian"],
+            "console": "integratedTerminal"
+        },
+                {
+            "name": "Debugger train_ppo.py (PPO Truncated Gaussian)",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/experiments/experiment_train_single_algo.py",
+            "args": ["--algo", "ppo_truncated_gaussian"],
             "console": "integratedTerminal"
         }
+
     ]
 }

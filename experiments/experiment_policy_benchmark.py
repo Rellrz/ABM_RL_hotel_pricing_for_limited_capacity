@@ -17,12 +17,11 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from configs.config import DATA_CONFIG, ENV_CONFIG, PATH_CONFIG
-from src.environment.abm_customer_model import load_eval_historical_data, load_train_historical_data
+from configs.config import ENV_CONFIG, PATH_CONFIG
+from src.environment.abm_customer_model import load_filtered_historical_data
 from src.environment.gym_hotel_env import GymHotelPricingEnv
 from src.training.train_ppo import EpisodeMetricsAggregator
 from src.training.algorithm_registry import get_algorithm_choices, get_algorithm_runner
-from src.utils.preprocess_data import data_years_label, get_data_split_metadata
 
 
 DEFAULT_CAPACITIES = [20, 30, 40, 50, 60]
@@ -337,8 +336,6 @@ def make_strategy_row(
 ) -> dict[str, float | int | str]:
     row: dict[str, float | int | str] = {
         "capacity": int(capacity),
-        "train_years": data_years_label(DATA_CONFIG.train_years),
-        "eval_years": data_years_label(DATA_CONFIG.eval_years),
         "strategy_name": str(strategy_name),
     }
     row.update(summary)
@@ -350,8 +347,7 @@ def make_strategy_row(
 def run_capacity_benchmark_job(
     algos: list[str],
     capacity: int,
-    train_historical_data: pd.DataFrame | None,
-    eval_historical_data: pd.DataFrame | None,
+    historical_data: pd.DataFrame | None,
     train_seed: int | None,
     eval_seeds: list[int],
     total_timesteps: int | None,
@@ -359,39 +355,18 @@ def run_capacity_benchmark_job(
     run_prefix: str,
     price_grid: list[float],
 ) -> tuple[list[dict[str, float | int | str]], list[dict[str, float | int | str]]]:
-    if train_historical_data is None:
-        train_historical_data = load_train_historical_data()
-    if eval_historical_data is None:
-        eval_historical_data = load_eval_historical_data()
-    _, static_meta = search_static_grid_best(
-        historical_data=train_historical_data,
+    if historical_data is None:
+        historical_data = load_filtered_historical_data()
+    static_summary, static_meta = search_static_grid_best(
+        historical_data=historical_data,
         capacity=int(capacity),
         eval_seeds=list(map(int, eval_seeds)),
         price_grid=list(map(float, price_grid)),
     )
-    _, heuristic_meta = search_heuristic_best(
-        historical_data=train_historical_data,
+    heuristic_summary, heuristic_meta = search_heuristic_best(
+        historical_data=historical_data,
         capacity=int(capacity),
         eval_seeds=list(map(int, eval_seeds)),
-    )
-    static_prices = tuple(json.loads(str(static_meta["best_static_prices"])))
-    static_policy = get_static_policy(static_prices)
-    static_summary, _ = evaluate_policy_over_seeds(
-        lambda seed: evaluate_manual_policy(static_policy, eval_historical_data, capacity, seed),
-        eval_seeds,
-        capacity,
-    )
-    heuristic_policy = get_heuristic_policy(
-        base_prices=tuple(json.loads(str(heuristic_meta["heuristic_base_prices"]))),
-        scarcity_alpha=float(heuristic_meta["heuristic_scarcity_alpha"]),
-        weekend_bonus=float(heuristic_meta["heuristic_weekend_bonus"]),
-        day_premium=float(heuristic_meta["heuristic_day_premium"]),
-        capacity=int(capacity),
-    )
-    heuristic_summary, _ = evaluate_policy_over_seeds(
-        lambda seed: evaluate_manual_policy(heuristic_policy, eval_historical_data, capacity, seed),
-        eval_seeds,
-        capacity,
     )
 
     hard_upper_bound = float(ENV_CONFIG.price_max) * float(capacity) * float(ENV_CONFIG.episode_days + 2)
@@ -421,7 +396,7 @@ def run_capacity_benchmark_job(
         run_name = f"{run_prefix}_{algo}_cap{capacity}"
         model, train_vec_env, run_dir = train_single_run_fn(
             run_name=run_name,
-            historical_data=train_historical_data,
+            historical_data=historical_data,
             capacity=int(capacity),
             train_seed=effective_train_seed,
             total_timesteps=effective_total_timesteps,
@@ -433,7 +408,7 @@ def run_capacity_benchmark_job(
                 model,
                 train_vec_env,
                 build_eval_env_fn,
-                eval_historical_data,
+                historical_data,
                 capacity,
                 seed,
             ),
@@ -460,8 +435,6 @@ def run_capacity_benchmark_job(
             {
                 "algo": str(algo),
                 "capacity": int(capacity),
-                "train_years": data_years_label(DATA_CONFIG.train_years),
-                "eval_years": data_years_label(DATA_CONFIG.eval_years),
                 "hard_upper_bound": float(hard_upper_bound),
                 "learned_revenue": float(learned_summary["episode_revenue_mean"]),
                 "static_grid_best_revenue": float(static_summary["episode_revenue_mean"]),
@@ -546,9 +519,7 @@ def main() -> None:
     experiment_root.mkdir(parents=True, exist_ok=True)
     plot_dir.mkdir(parents=True, exist_ok=True)
 
-    train_historical_data = load_train_historical_data()
-    eval_historical_data = load_eval_historical_data()
-    split_metadata = get_data_split_metadata(train_historical_data, eval_historical_data)
+    historical_data = load_filtered_historical_data()
     strategy_results: list[dict[str, float | int | str]] = []
     capacity_summaries: list[dict[str, float | int | str]] = []
     capacities = list(map(int, args.capacities))
@@ -561,8 +532,7 @@ def main() -> None:
             rows, summaries = run_capacity_benchmark_job(
                 algos=algos,
                 capacity=int(capacity),
-                train_historical_data=train_historical_data,
-                eval_historical_data=eval_historical_data,
+                historical_data=historical_data,
                 train_seed=args.train_seed,
                 eval_seeds=eval_seeds,
                 total_timesteps=args.total_timesteps,
@@ -586,7 +556,6 @@ def main() -> None:
                     run_capacity_benchmark_job,
                     algos,
                     int(capacity),
-                    None,
                     None,
                     args.train_seed,
                     eval_seeds,
@@ -629,7 +598,6 @@ def main() -> None:
         "eval_seeds": eval_seeds,
         "total_timesteps_override": args.total_timesteps,
         "price_grid": price_grid,
-        **split_metadata,
         "heuristic_base_options": [list(option) for option in DEFAULT_HEURISTIC_BASES],
         "heuristic_scarcity_alpha_grid": DEFAULT_HEURISTIC_ALPHA,
         "heuristic_weekend_bonus_grid": DEFAULT_HEURISTIC_WEEKEND,

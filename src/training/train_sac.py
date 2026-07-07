@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 from configs.config import CONFIG, PATH_CONFIG, SAC_CONFIG
-from src.environment.abm_customer_model import load_train_historical_data
+from src.environment.abm_customer_model import load_filtered_historical_data
 from src.training.train_ppo import EpisodeMetricsAggregator, _apply_nested_overrides
 
 
@@ -24,7 +24,7 @@ def build_env(
     from stable_baselines3.common.vec_env import DummyVecEnv, VecNormalize
     from src.environment.gym_hotel_env import GymHotelPricingEnv
 
-    historical_data = load_train_historical_data() if historical_data is None else historical_data
+    historical_data = load_filtered_historical_data() if historical_data is None else historical_data
     env_seed = int(SAC_CONFIG.seed if seed is None else seed)
     reward_norm = bool(SAC_CONFIG.normalize_reward if norm_reward is None else norm_reward)
     env_kwargs = dict(env_overrides or {})
@@ -227,7 +227,7 @@ def main() -> None:
             "未检测到 stable-baselines3。请先执行 `pip install -r requirements.txt`。"
         ) from exc
 
-    historical_data = load_train_historical_data()
+    historical_data = load_filtered_historical_data()
     _, vec_env, run_dir = train_single_run(
         run_name=SAC_CONFIG.run_name,
         historical_data=historical_data,

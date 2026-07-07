@@ -11,7 +11,6 @@ This repository currently implements the baseline model described in `idea2.md`.
 - `src/training/beta_policy.py`: PPO actor-critic policy using a Beta action distribution mapped to bounded continuous pricing actions.
 - `src/training/truncated_gaussian_policy.py`: PPO actor-critic policies using truncated Gaussian and scale-adjusted truncated Gaussian action distributions for bounded continuous pricing actions.
 - `src/training/train_sac.py`: reusable Stable-Baselines3 SAC trainer implementation with bounded continuous actions handled by the algorithm.
-- `src/training/warm_start.py`: PPO-beta warm-start utilities that behavior-clone inventory-protection demonstrations before PPO fine-tuning.
 - `src/training/algorithm_registry.py`: central algorithm registry that exposes `ppo_standard`, `ppo_tanh_gaussian`, `ppo_truncated_gaussian`, `ppo_scale_adjusted_truncated_gaussian`, `ppo_beta`, and `sac` as independent experiment algorithms.
 - `src/baseline/pricing_baselines.py`: reusable static, weekday/weekend static, and inventory-protection baseline policies and search helpers.
 - `experiments/experiment_train_single_algo.py`: simple single-run training entry point; supports `--algo`.
@@ -100,8 +99,6 @@ The canonical temporal generalization split is configured in `DataConfig`: `trai
 For algorithm experimentation, prefer adding new trainers behind `src/training/algorithm_registry.py` and reusing the shared `train_single_run` / `build_eval_env` interface rather than hard-coding `if algo == ...` branches throughout experiment scripts. Keep experiment outputs algorithm-labeled in run names, CSV rows, and summary files.
 
 For PPO action-distribution experiments, use the independent algorithm names exposed by `src/training/algorithm_registry.py`: `ppo_standard`, `ppo_tanh_gaussian`, `ppo_truncated_gaussian`, `ppo_scale_adjusted_truncated_gaussian`, and `ppo_beta`. The registry wrappers set `PPOConfig.policy_variant` for each run; experiment scripts should not manually mutate `PPO_CONFIG.policy_variant`. Treat `ppo_tanh_gaussian` as the squashed/logit-normal-style bounded policy, `ppo_truncated_gaussian` / `ppo_scale_adjusted_truncated_gaussian` as the truncated-normal alternatives, and `ppo_beta` as the bounded Beta-distribution alternative for diagnosing boundary-action bias.
-
-For warm-start experiments, use `experiments/experiment_warm_start_policy.py`. It intentionally evaluates training and testing on the same train-year demand distribution while using separate baseline-selection and final-evaluation seeds. This isolates whether behavior-cloning inventory-protection demonstrations improves PPO-beta optimization before reintroducing temporal generalization.
 
 For baseline experimentation, keep reusable pricing policies and search helpers under `src/baseline/`. Experiment scripts should orchestrate scenarios, outputs, and plots, but should not duplicate baseline policy implementations.
 

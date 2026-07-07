@@ -6,11 +6,7 @@ import numpy as np
 import pandas as pd
 
 from configs.config import ABM_CONFIG, DATA_CONFIG
-from src.utils.preprocess_data import (
-    build_demand_calibration,
-    load_eval_historical_data,
-    load_train_historical_data,
-)
+from src.utils.preprocess_data import build_demand_calibration, load_filtered_historical_data
 
 
 class HotelABMModel:
@@ -28,7 +24,7 @@ class HotelABMModel:
     def __init__(self, historical_data: Optional[pd.DataFrame] = None, random_seed: Optional[int] = None):
         self.rng = np.random.default_rng(DATA_CONFIG.seed if random_seed is None else random_seed)
         self.historical_data = (
-            load_train_historical_data() if historical_data is None else historical_data.copy()
+            load_filtered_historical_data() if historical_data is None else historical_data.copy()
         )
         self.calibration = build_demand_calibration(self.historical_data)
         self.trace_enabled = False
