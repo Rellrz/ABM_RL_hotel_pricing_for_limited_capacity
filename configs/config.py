@@ -61,10 +61,10 @@ class EnvConfig:
 
 @dataclass
 class PPOConfig:
-    total_timesteps: int = 1600000
+    total_timesteps: int = 800000
     learning_rate: float = 1e-4
-    n_steps: int = 128 #128
-    batch_size: int = 64 #64
+    n_steps: int = 512 #128
+    batch_size: int = 128 #64
     n_epochs: int = 10 #10
     gamma: float = 0.99
     gae_lambda: float = 0.95
@@ -118,6 +118,16 @@ class SACConfig:
 
 
 @dataclass
+class WarmStartConfig:
+    demo_episodes: int = 100
+    demo_seed: int = 314
+    bc_epochs: int = 20
+    bc_batch_size: int = 1024
+    bc_learning_rate: float = 1e-4
+    bc_entropy_coef: float = 0.001
+
+
+@dataclass
 class ProjectConfig:
     paths: PathConfig = field(default_factory=PathConfig)
     data: DataConfig = field(default_factory=DataConfig)
@@ -125,6 +135,7 @@ class ProjectConfig:
     env: EnvConfig = field(default_factory=EnvConfig)
     ppo: PPOConfig = field(default_factory=PPOConfig)
     sac: SACConfig = field(default_factory=SACConfig)
+    warm_start: WarmStartConfig = field(default_factory=WarmStartConfig)
 
     def validate(self) -> None:
         if not self.data.train_years:
@@ -172,6 +183,16 @@ class ProjectConfig:
             raise ValueError("truncated_gaussian_d_min 必须位于 (0, 1] 内。")
         if self.ppo.beta_min_concentration <= 0.0:
             raise ValueError("beta_min_concentration 必须为正数。")
+        if self.warm_start.demo_episodes <= 0:
+            raise ValueError("warm_start.demo_episodes 必须为正数。")
+        if self.warm_start.bc_epochs <= 0:
+            raise ValueError("warm_start.bc_epochs 必须为正数。")
+        if self.warm_start.bc_batch_size <= 0:
+            raise ValueError("warm_start.bc_batch_size 必须为正数。")
+        if self.warm_start.bc_learning_rate <= 0.0:
+            raise ValueError("warm_start.bc_learning_rate 必须为正数。")
+        if self.warm_start.bc_entropy_coef < 0.0:
+            raise ValueError("warm_start.bc_entropy_coef 不能为负数。")
 
     def setup(self) -> None:
         self.validate()
@@ -187,6 +208,7 @@ ABM_CONFIG = CONFIG.abm
 ENV_CONFIG = CONFIG.env
 PPO_CONFIG = CONFIG.ppo
 SAC_CONFIG = CONFIG.sac
+WARM_START_CONFIG = CONFIG.warm_start
 
 
 def get_config() -> ProjectConfig:
@@ -201,6 +223,7 @@ __all__ = [
     "EnvConfig",
     "PPOConfig",
     "SACConfig",
+    "WarmStartConfig",
     "ProjectConfig",
     "CONFIG",
     "PATH_CONFIG",
@@ -209,5 +232,6 @@ __all__ = [
     "ENV_CONFIG",
     "PPO_CONFIG",
     "SAC_CONFIG",
+    "WARM_START_CONFIG",
     "get_config",
 ]
