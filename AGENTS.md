@@ -11,6 +11,7 @@ This repository currently implements the baseline model described in `idea2.md`.
 - `src/training/beta_policy.py`: PPO actor-critic policy using a Beta action distribution mapped to bounded continuous pricing actions.
 - `src/training/truncated_gaussian_policy.py`: PPO actor-critic policies using truncated Gaussian and scale-adjusted truncated Gaussian action distributions for bounded continuous pricing actions.
 - `src/training/train_sac.py`: reusable Stable-Baselines3 SAC trainer implementation with bounded continuous actions handled by the algorithm.
+- `src/training/warm_start.py`: PPO-beta warm-start utilities that behavior-clone inventory-protection demonstrations before PPO fine-tuning.
 - `src/training/algorithm_registry.py`: central algorithm registry that exposes `ppo_standard`, `ppo_tanh_gaussian`, `ppo_truncated_gaussian`, `ppo_scale_adjusted_truncated_gaussian`, `ppo_beta`, and `sac` as independent experiment algorithms.
 - `src/baseline/pricing_baselines.py`: reusable static, weekday/weekend static, and inventory-protection baseline policies and search helpers.
 - `experiments/experiment_train_single_algo.py`: simple single-run training entry point; supports `--algo`.
@@ -19,6 +20,7 @@ This repository currently implements the baseline model described in `idea2.md`.
 - `experiments/experiment_penalty_ablation.py`: penalty ablation experiment entry point; supports `--algo`.
 - `experiments/experiment_policy_benchmark.py`: learned-policy benchmark entry point for hard upper bound plus strong baselines; supports both `--algo` and `--algos` for multi-algorithm comparison in one run.
 - `experiments/experiment_scenario_policy_training.py`: explicit scenario-list training benchmark for selected dynamic-pricing-room scenarios; reads `configs/scenario_policy_training_scenarios.json`, trains one or more `--algos`, evaluates strong static and inventory-protection baselines, and exports per-seed test rows plus summary CSVs.
+- `experiments/experiment_warm_start_policy.py`: same-distribution PPO-beta warm-start experiment; selects inventory-protection parameters on train-year seeds, behavior-clones that baseline, fine-tunes PPO-beta, and compares against direct PPO-beta plus baselines.
 - `experiments/experiment_dynamic_baseline_diagnostics.py`: baseline-only diagnostic entry point for testing whether global static, weekday/weekend static, or inventory-protection policies reveal dynamic pricing room.
 - `experiments/experiment_mechanism_diagnostics.py`: mechanism-grid diagnostic entry point that sweeps `flexible_customer_share`, `lambda_day_mismatch_flex`, and capacity without training RL policies.
 - `train_ppo.py`: thin compatibility wrapper that forwards to `src/training/train_ppo.py`.
@@ -45,6 +47,7 @@ conda run -n abm_new python experiments/experiment_capacity_sensitivity.py --alg
 conda run -n abm_new python experiments/experiment_capacity_sensitivity.py --algo sac --capacities 20 30 40 50 60
 conda run -n abm_new python experiments/experiment_policy_benchmark.py --algos ppo_tanh_gaussian sac --max-workers 5
 conda run -n abm_new python experiments/experiment_scenario_policy_training.py --scenario-file configs/scenario_policy_training_scenarios.json --algos sac ppo_tanh_gaussian ppo_beta --max-workers 3
+conda run -n abm_new python experiments/experiment_warm_start_policy.py --scenario-names scenario_b_cap20_flex075_lam48 --total-timesteps 200000 --no-progress-bar
 conda run -n abm_new python experiments/experiment_dynamic_baseline_diagnostics.py --max-workers 5
 conda run -n abm_new python experiments/experiment_mechanism_diagnostics.py --max-workers 6
 tensorboard --logdir outputs/tensorboard
@@ -103,6 +106,8 @@ For algorithm experimentation, prefer adding new trainers behind `src/training/a
 For selected mechanism scenarios, prefer `experiments/experiment_scenario_policy_training.py` with an explicit JSON scenario list over ad hoc Cartesian grids. Keep `eval_episode_results.csv` for per-seed test diagnostics, `strategy_results.csv` for mean/std strategy metrics, and `scenario_summary.csv` for learned-vs-baseline comparisons.
 
 For PPO action-distribution experiments, use the independent algorithm names exposed by `src/training/algorithm_registry.py`: `ppo_standard`, `ppo_tanh_gaussian`, `ppo_truncated_gaussian`, `ppo_scale_adjusted_truncated_gaussian`, and `ppo_beta`. The registry wrappers set `PPOConfig.policy_variant` for each run; experiment scripts should not manually mutate `PPO_CONFIG.policy_variant`. Treat `ppo_tanh_gaussian` as the squashed/logit-normal-style bounded policy, `ppo_truncated_gaussian` / `ppo_scale_adjusted_truncated_gaussian` as the truncated-normal alternatives, and `ppo_beta` as the bounded Beta-distribution alternative for diagnosing boundary-action bias.
+
+For warm-start experiments, use `experiments/experiment_warm_start_policy.py`. It intentionally evaluates training and testing on the same train-year demand distribution while using separate baseline-selection and final-evaluation seeds. This isolates whether behavior-cloning inventory-protection demonstrations improves PPO-beta optimization before reintroducing temporal generalization.
 
 For baseline experimentation, keep reusable pricing policies and search helpers under `src/baseline/`. Experiment scripts should orchestrate scenarios, outputs, and plots, but should not duplicate baseline policy implementations.
 
