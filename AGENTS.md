@@ -17,6 +17,7 @@ This repository currently implements the baseline model described in `idea2.md`.
 - `experiments/experiment_capacity_sensitivity.py`: capacity sensitivity experiment entry point with training, evaluation, CSV export, and single-metric plots. It supports multi-process execution across capacities and `--algo`.
 - `experiments/experiment_penalty_scaling.py`: penalty scaling experiment entry point; supports `--algo`.
 - `experiments/experiment_penalty_ablation.py`: penalty ablation experiment entry point; supports `--algo`.
+- `experiments/experiment_reward_design_ablation.py`: PPO-beta reward-design ablation comparing the original reward, no-penalty reward, and weighted scarcity reward under the same scenario.
 - `experiments/experiment_policy_benchmark.py`: learned-policy benchmark entry point for hard upper bound plus strong baselines; supports both `--algo` and `--algos` for multi-algorithm comparison in one run.
 - `experiments/experiment_dynamic_baseline_diagnostics.py`: baseline-only diagnostic entry point for testing whether global static, weekday/weekend static, or inventory-protection policies reveal dynamic pricing room.
 - `experiments/experiment_mechanism_diagnostics.py`: mechanism-grid diagnostic entry point that sweeps `flexible_customer_share`, `lambda_day_mismatch_flex`, and capacity without training RL policies.
@@ -42,6 +43,7 @@ conda run -n abm_new python experiments/experiment_train_single_algo.py --algo p
 conda run -n abm_new python experiments/experiment_train_single_algo.py --algo sac
 conda run -n abm_new python experiments/experiment_capacity_sensitivity.py --algo ppo_tanh_gaussian --capacities 20 30 40 50 60
 conda run -n abm_new python experiments/experiment_capacity_sensitivity.py --algo sac --capacities 20 30 40 50 60
+conda run -n abm_new python experiments/experiment_reward_design_ablation.py --total-timesteps 200000 --eval-seeds 142 143 144 --price-grid 100 150 200 --baseline-top-k 10 --no-progress-bar
 conda run -n abm_new python experiments/experiment_policy_benchmark.py --algos ppo_tanh_gaussian sac --max-workers 5
 conda run -n abm_new python experiments/experiment_dynamic_baseline_diagnostics.py --max-workers 5
 conda run -n abm_new python experiments/experiment_mechanism_diagnostics.py --max-workers 6

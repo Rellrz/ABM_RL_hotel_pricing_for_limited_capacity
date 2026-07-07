@@ -19,6 +19,8 @@ METRIC_BASE_NAMES = [
     "episode_revenue",
     "episode_reward",
     "episode_penalty",
+    "episode_full_penalty",
+    "episode_scarcity_penalty",
     "episode_acceptance_rate",
     "avg_price_day0",
     "avg_price_day1",
@@ -30,6 +32,9 @@ METRIC_BASE_NAMES = [
     "full_rate_day0",
     "full_rate_day1",
     "full_rate_day2",
+    "avg_rejected_day0",
+    "avg_rejected_day1",
+    "avg_rejected_day2",
     "revenue_per_arrival",
     "revenue_per_capacity_day",
 ]

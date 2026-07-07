@@ -38,7 +38,7 @@ class ABMConfig:
     utility_noise_std: float = 8.0
     flexible_customer_share: float = 0.5
     lambda_day_mismatch_biz: float = 1000.0
-    lambda_day_mismatch_flex: float = 12.0
+    lambda_day_mismatch_flex: float = 48.0
     lambda_reference_price: float = 0.35
     reference_memory_alpha: float = 0.85
     weekday_arrival_fallback_mean: float = 18.0
@@ -47,15 +47,17 @@ class ABMConfig:
 
 @dataclass
 class EnvConfig:
-    capacity: int = 50
+    capacity: int = 20
     episode_days: int = 256
     price_min: float = 50.0
     price_max: float = 300.0
-    full_capacity_penalty: float = 80.0
+    reward_mode: str = "weighted_scarcity"  # standard/no_penalty/weighted_scarcity
+    full_capacity_penalty: float = 0.0
     penalty_scale_mode: str = "fixed"
     penalty_capacity_ref: int = 30
     scarcity_threshold_ratio: float = 0.3
-    scarcity_penalty_coef: float = 400.0
+    scarcity_penalty_coef: float = 9000.0   # 9000.0
+    scarcity_penalty_weights: tuple[float, float, float] = (0.0, 0.5, 1.0)
     start_day: int = 0
 
 
@@ -63,9 +65,9 @@ class EnvConfig:
 class PPOConfig:
     total_timesteps: int = 800000
     learning_rate: float = 1e-4
-    n_steps: int = 128
-    batch_size: int = 64
-    n_epochs: int = 10
+    n_steps: int = 128 #128
+    batch_size: int = 64 #64
+    n_epochs: int = 10 #10
     gamma: float = 0.99
     gae_lambda: float = 0.95
     clip_range: float = 0.1
@@ -84,7 +86,8 @@ class PPOConfig:
     policy_variant: str = "tanh_gaussian"  # standard/tanh_gaussian/truncated_gaussian/scale_adjusted_truncated_gaussian/beta
     truncated_gaussian_k: float = 2.0
     truncated_gaussian_d_min: float = 0.01
-    beta_min_concentration: float = 1.0
+    #控制 Beta 分布的 alpha/beta 最小形状参数
+    beta_min_concentration: float = 0.5 #1
     save_name: str = "ppo_idea2_hotel"
     run_name: str = "idea2_ppo"
     log_interval: int = 10
@@ -117,6 +120,16 @@ class SACConfig:
 
 
 @dataclass
+class WarmStartConfig:
+    demo_episodes: int = 100
+    demo_seed: int = 314
+    bc_epochs: int = 20
+    bc_batch_size: int = 1024
+    bc_learning_rate: float = 1e-4
+    bc_entropy_coef: float = 0.001
+
+
+@dataclass
 class ProjectConfig:
     paths: PathConfig = field(default_factory=PathConfig)
     data: DataConfig = field(default_factory=DataConfig)
@@ -124,6 +137,7 @@ class ProjectConfig:
     env: EnvConfig = field(default_factory=EnvConfig)
     ppo: PPOConfig = field(default_factory=PPOConfig)
     sac: SACConfig = field(default_factory=SACConfig)
+    warm_start: WarmStartConfig = field(default_factory=WarmStartConfig)
 
     def validate(self) -> None:
         if not self.data.train_years:
@@ -146,6 +160,8 @@ class ProjectConfig:
             raise ValueError("capacity 必须为正数。")
         if self.env.episode_days <= 0:
             raise ValueError("episode_days 必须为正数。")
+        if self.env.reward_mode not in {"standard", "no_penalty", "weighted_scarcity"}:
+            raise ValueError("reward_mode 仅支持 'standard', 'no_penalty' 或 'weighted_scarcity'。")
         if self.env.penalty_scale_mode not in {"fixed", "linear_capacity"}:
             raise ValueError("penalty_scale_mode 仅支持 'fixed' 或 'linear_capacity'。")
         if self.env.penalty_capacity_ref <= 0:
@@ -154,6 +170,10 @@ class ProjectConfig:
             raise ValueError("scarcity_threshold_ratio 必须位于 (0, 1) 内。")
         if self.env.scarcity_penalty_coef < 0.0:
             raise ValueError("scarcity_penalty_coef 不能为负数。")
+        if len(self.env.scarcity_penalty_weights) != 3:
+            raise ValueError("scarcity_penalty_weights 必须包含 3 个权重。")
+        if any(weight < 0.0 for weight in self.env.scarcity_penalty_weights):
+            raise ValueError("scarcity_penalty_weights 不能包含负数。")
         if self.ppo.policy_variant not in {
             "standard",
             "tanh_gaussian",
@@ -171,6 +191,17 @@ class ProjectConfig:
             raise ValueError("truncated_gaussian_d_min 必须位于 (0, 1] 内。")
         if self.ppo.beta_min_concentration <= 0.0:
             raise ValueError("beta_min_concentration 必须为正数。")
+        if self.warm_start.demo_episodes <= 0:
+            raise ValueError("warm_start.demo_episodes 必须为正数。")
+        if self.warm_start.bc_epochs <= 0:
+            raise ValueError("warm_start.bc_epochs 必须为正数。")
+        if self.warm_start.bc_batch_size <= 0:
+            raise ValueError("warm_start.bc_batch_size 必须为正数。")
+        if self.warm_start.bc_learning_rate <= 0.0:
+            raise ValueError("warm_start.bc_learning_rate 必须为正数。")
+        if self.warm_start.bc_entropy_coef < 0.0:
+            raise ValueError("warm_start.bc_entropy_coef 不能为负数。")
+
     def setup(self) -> None:
         self.validate()
         self.paths.ensure_dirs()
@@ -185,6 +216,7 @@ ABM_CONFIG = CONFIG.abm
 ENV_CONFIG = CONFIG.env
 PPO_CONFIG = CONFIG.ppo
 SAC_CONFIG = CONFIG.sac
+WARM_START_CONFIG = CONFIG.warm_start
 
 
 def get_config() -> ProjectConfig:
@@ -199,6 +231,7 @@ __all__ = [
     "EnvConfig",
     "PPOConfig",
     "SACConfig",
+    "WarmStartConfig",
     "ProjectConfig",
     "CONFIG",
     "PATH_CONFIG",
@@ -207,5 +240,6 @@ __all__ = [
     "ENV_CONFIG",
     "PPO_CONFIG",
     "SAC_CONFIG",
+    "WARM_START_CONFIG",
     "get_config",
 ]

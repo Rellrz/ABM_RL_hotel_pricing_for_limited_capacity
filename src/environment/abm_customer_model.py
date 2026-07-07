@@ -117,6 +117,9 @@ class HotelABMModel:
 
         arrivals = self._sample_arrivals(current_day)
         requests = np.zeros(3, dtype=int)
+        accepted = np.zeros(3, dtype=int)
+        rejected_by_capacity = np.zeros(3, dtype=int)
+        remaining_inventory = inventory.astype(int).copy()
 
         for customer_id in range(arrivals):
             customer_type = self._sample_customer_type()
@@ -132,42 +135,54 @@ class HotelABMModel:
                 + ABM_CONFIG.lambda_reference_price * (reference_prices - prices)
                 + noise
             )
-            chosen_offset = int(np.argmax(utilities))
-            choose_book = bool(utilities[chosen_offset] >= 0.0)
-            if choose_book:
-                requests[chosen_offset] += 1
-                self._record_trace(
-                    current_day=current_day,
-                    customer_id=customer_id,
-                    customer_type=customer_type,
-                    ideal_offset=ideal_offset,
-                    wtp=wtp,
-                    prices=prices,
-                    references=reference_prices,
-                    utilities=utilities,
-                    chosen_offset=chosen_offset,
-                    booked=True,
-                )
-            else:
-                self._record_trace(
-                    current_day=current_day,
-                    customer_id=customer_id,
-                    customer_type=customer_type,
-                    ideal_offset=ideal_offset,
-                    wtp=wtp,
-                    prices=prices,
-                    references=reference_prices,
-                    utilities=utilities,
-                    chosen_offset=None,
-                    booked=False,
-                )
+            chosen_offset: Optional[int] = None
+            booked = False
 
-        accepted = np.minimum(requests, inventory.astype(int))
+            if customer_type == "flex":
+                feasible_offsets = [int(offset) for offset in np.argsort(utilities)[::-1] if utilities[offset] >= 0.0]
+                for offset in feasible_offsets:
+                    if remaining_inventory[offset] > 0:
+                        chosen_offset = offset
+                        booked = True
+                        break
+                if chosen_offset is None and feasible_offsets:
+                    chosen_offset = int(feasible_offsets[0])
+            else:
+                chosen_offset = int(np.argmax(utilities))
+                if utilities[chosen_offset] < 0.0:
+                    chosen_offset = None
+                elif remaining_inventory[chosen_offset] > 0:
+                    booked = True
+
+            if chosen_offset is not None:
+                requests[chosen_offset] += 1
+                if booked:
+                    accepted[chosen_offset] += 1
+                    remaining_inventory[chosen_offset] -= 1
+                else:
+                    rejected_by_capacity[chosen_offset] += 1
+                trace_chosen_offset = chosen_offset
+            else:
+                trace_chosen_offset = None
+
+            self._record_trace(
+                current_day=current_day,
+                customer_id=customer_id,
+                customer_type=customer_type,
+                ideal_offset=ideal_offset,
+                wtp=wtp,
+                prices=prices,
+                references=reference_prices,
+                utilities=utilities,
+                chosen_offset=trace_chosen_offset,
+                booked=booked,
+            )
+
         return {
             "arrivals": int(arrivals),
             "requests_by_offset": requests.astype(int).tolist(),
             "accepted_by_offset": accepted.astype(int).tolist(),
-            "rejected_by_capacity": (requests - accepted).astype(int).tolist(),
+            "rejected_by_capacity": rejected_by_capacity.astype(int).tolist(),
         }
 
     def get_utility_trace(self) -> pd.DataFrame:

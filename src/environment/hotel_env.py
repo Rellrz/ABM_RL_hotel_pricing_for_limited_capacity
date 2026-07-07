@@ -17,15 +17,22 @@ class HotelEnvironment:
         historical_data: Optional[pd.DataFrame] = None,
         random_seed: Optional[int] = None,
         capacity: Optional[int] = None,
+        reward_mode: Optional[str] = None,
         full_capacity_penalty: Optional[float] = None,
         penalty_scale_mode: Optional[str] = None,
         penalty_capacity_ref: Optional[int] = None,
+        scarcity_threshold_ratio: Optional[float] = None,
+        scarcity_penalty_coef: Optional[float] = None,
+        scarcity_penalty_weights: Optional[tuple[float, float, float] | list[float]] = None,
     ):
         self.capacity = int(ENV_CONFIG.capacity if capacity is None else capacity)
         self.window_size = int(ABM_CONFIG.window_size)
         self.episode_days = int(ENV_CONFIG.episode_days)
         self.price_min = float(ENV_CONFIG.price_min)
         self.price_max = float(ENV_CONFIG.price_max)
+        self.reward_mode = str(ENV_CONFIG.reward_mode if reward_mode is None else reward_mode)
+        if self.reward_mode not in {"standard", "no_penalty", "weighted_scarcity"}:
+            raise ValueError(f"未知 reward_mode: {self.reward_mode}")
         self.full_capacity_penalty = float(
             ENV_CONFIG.full_capacity_penalty if full_capacity_penalty is None else full_capacity_penalty
         )
@@ -35,8 +42,16 @@ class HotelEnvironment:
         self.penalty_capacity_ref = int(
             ENV_CONFIG.penalty_capacity_ref if penalty_capacity_ref is None else penalty_capacity_ref
         )
-        self.scarcity_threshold_ratio = float(ENV_CONFIG.scarcity_threshold_ratio)
-        self.scarcity_penalty_coef = float(ENV_CONFIG.scarcity_penalty_coef)
+        self.scarcity_threshold_ratio = float(
+            ENV_CONFIG.scarcity_threshold_ratio if scarcity_threshold_ratio is None else scarcity_threshold_ratio
+        )
+        self.scarcity_penalty_coef = float(
+            ENV_CONFIG.scarcity_penalty_coef if scarcity_penalty_coef is None else scarcity_penalty_coef
+        )
+        weights = ENV_CONFIG.scarcity_penalty_weights if scarcity_penalty_weights is None else scarcity_penalty_weights
+        self.scarcity_penalty_weights = np.asarray(weights, dtype=np.float64).reshape(self.window_size)
+        if np.any(self.scarcity_penalty_weights < 0.0):
+            raise ValueError("scarcity_penalty_weights 不能包含负数。")
         self.start_day = int(ENV_CONFIG.start_day)
         self.abm_model = HotelABMModel(historical_data=historical_data, random_seed=random_seed)
         self.current_day = int(self.start_day)
@@ -69,6 +84,27 @@ class HotelEnvironment:
         if self.penalty_scale_mode == "linear_capacity":
             return float(self.full_capacity_penalty * self.capacity / max(1, self.penalty_capacity_ref))
         raise ValueError(f"未知 penalty_scale_mode: {self.penalty_scale_mode}")
+
+    def _compute_reward_components(self, revenue: float, inventory_after: np.ndarray) -> tuple[float, float, float, float]:
+        remaining_ratio = inventory_after.astype(np.float64) / float(self.capacity)
+        scarcity_gap = np.maximum(self.scarcity_threshold_ratio - remaining_ratio, 0.0)
+        effective_full_penalty = float(self._effective_full_penalty())
+
+        if self.reward_mode == "no_penalty":
+            full_penalty = 0.0
+            scarcity_penalty = 0.0
+        elif self.reward_mode == "weighted_scarcity":
+            full_penalty = 0.0
+            scarcity_penalty = float(
+                self.scarcity_penalty_coef * np.sum(self.scarcity_penalty_weights * scarcity_gap**2)
+            )
+        else:
+            scarcity_penalty = float(self.scarcity_penalty_coef * np.sum(scarcity_gap**2))
+            full_penalty = float(effective_full_penalty * np.sum(inventory_after == 0))
+
+        total_penalty = float(full_penalty + scarcity_penalty)
+        reward = float(revenue - total_penalty)
+        return reward, effective_full_penalty, full_penalty, scarcity_penalty
 
     def _build_state(self) -> Dict[str, Any]:
         return {
@@ -125,12 +161,11 @@ class HotelEnvironment:
         revenue_by_offset = prices * accepted.astype(np.float64)
         revenue = float(np.sum(revenue_by_offset))
         remaining_ratio = inventory_after.astype(np.float64) / float(self.capacity)
-        scarcity_gap = np.maximum(self.scarcity_threshold_ratio - remaining_ratio, 0.0)
-        scarcity_penalty = float(self.scarcity_penalty_coef * np.sum(scarcity_gap**2))
-        effective_full_penalty = float(self._effective_full_penalty())
-        full_penalty = float(effective_full_penalty * np.sum(inventory_after == 0))
+        reward, effective_full_penalty, full_penalty, scarcity_penalty = self._compute_reward_components(
+            revenue=revenue,
+            inventory_after=inventory_after,
+        )
         total_penalty = float(full_penalty + scarcity_penalty)
-        reward = float(revenue - total_penalty)
 
         updated_reference = (
             ABM_CONFIG.reference_memory_alpha * reference_before

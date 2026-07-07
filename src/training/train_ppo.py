@@ -24,6 +24,8 @@ class EpisodeMetricsAggregator:
         self.episode_scarcity_penalty = 0.0
         self.episode_arrivals = 0.0
         self.episode_accepted = 0.0
+        self.episode_rejected = 0.0
+        self.episode_rejected_by_offset = np.zeros(3, dtype=float)
         self.episode_prices: list[np.ndarray] = []
         self.episode_inventory: list[np.ndarray] = []
         self.episode_inventory_before: list[np.ndarray] = []
@@ -39,12 +41,15 @@ class EpisodeMetricsAggregator:
         self.episode_penalty += float(info.get("total_penalty", info.get("full_penalty", 0.0)))
         self.episode_arrivals += float(info.get("arrivals", 0.0))
         accepted = np.asarray(info.get("accepted_by_offset", [0.0, 0.0, 0.0]), dtype=float)
+        rejected = np.asarray(info.get("rejected_by_capacity", [0.0, 0.0, 0.0]), dtype=float)
         prices = np.asarray(info.get("prices", [0.0, 0.0, 0.0]), dtype=float)
         inventory_before = np.asarray(info.get("inventory_before", [0.0, 0.0, 0.0]), dtype=float)
         inventory = np.asarray(info.get("inventory_after", [0.0, 0.0, 0.0]), dtype=float)
         full_flags = (inventory <= 0.0).astype(float)
 
         self.episode_accepted += float(np.sum(accepted))
+        self.episode_rejected += float(np.sum(rejected))
+        self.episode_rejected_by_offset += rejected
         self.episode_prices.append(prices)
         self.episode_inventory.append(inventory)
         self.episode_inventory_before.append(inventory_before)
@@ -63,6 +68,7 @@ class EpisodeMetricsAggregator:
         full_day_rate = self.episode_full_day_count / max(1.0, self.episode_step_count)
         full_slot_rate = self.episode_full_slot_count / max(1.0, 3.0 * self.episode_step_count)
         full_slot_rate_by_offset = self.episode_full_slot_by_offset / max(1.0, self.episode_step_count)
+        rejected_by_offset = self.episode_rejected_by_offset / max(1.0, self.episode_step_count)
         return {
             "episode_revenue": float(self.episode_revenue),
             "episode_penalty": float(self.episode_penalty),
@@ -70,6 +76,7 @@ class EpisodeMetricsAggregator:
             "episode_scarcity_penalty": float(self.episode_scarcity_penalty),
             "episode_arrivals": float(self.episode_arrivals),
             "episode_accepted": float(self.episode_accepted),
+            "episode_rejected": float(self.episode_rejected),
             "episode_acceptance_rate": float(acceptance_rate),
             "avg_price": float(np.mean(stacked_prices)),
             "avg_inventory": float(np.mean(stacked_inventory)),
@@ -88,6 +95,9 @@ class EpisodeMetricsAggregator:
             "full_rate_day0": float(full_slot_rate_by_offset[0]),
             "full_rate_day1": float(full_slot_rate_by_offset[1]),
             "full_rate_day2": float(full_slot_rate_by_offset[2]),
+            "avg_rejected_day0": float(rejected_by_offset[0]),
+            "avg_rejected_day1": float(rejected_by_offset[1]),
+            "avg_rejected_day2": float(rejected_by_offset[2]),
         }
 
 
