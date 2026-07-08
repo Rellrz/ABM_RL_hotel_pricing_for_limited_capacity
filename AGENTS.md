@@ -16,7 +16,7 @@ This repository currently implements the baseline model described in `idea2.md`.
 - `experiments/experiment_train_single_algo.py`: simple single-run training entry point; supports `--algo`.
 - `experiments/experiment_capacity_sensitivity.py`: capacity sensitivity experiment entry point with training, evaluation, CSV export, and single-metric plots. It supports multi-process execution across capacities and `--algo`.
 - `experiments/experiment_penalty_scaling.py`: penalty scaling experiment entry point; supports `--algo`.
-- `experiments/experiment_penalty_ablation.py`: penalty ablation experiment entry point; supports `--algo`.
+- `experiments/experiment_penalty_ablation.py`: new weighted-scarcity penalty ablation entry point; supports `--algo` and modes such as `no_penalty`, `weighted_scarcity_3000`, `weighted_scarcity_6000`, and `weighted_scarcity_9000`.
 - `experiments/experiment_reward_design_ablation.py`: PPO-beta reward-design ablation comparing the original reward, no-penalty reward, and weighted scarcity reward under the same scenario.
 - `experiments/experiment_policy_benchmark.py`: learned-policy benchmark entry point for hard upper bound plus strong baselines; supports both `--algo` and `--algos` for multi-algorithm comparison in one run.
 - `experiments/experiment_dynamic_baseline_diagnostics.py`: baseline-only diagnostic entry point for testing whether global static, weekday/weekend static, or inventory-protection policies reveal dynamic pricing room.
@@ -44,6 +44,7 @@ conda run -n abm_new python experiments/experiment_train_single_algo.py --algo s
 conda run -n abm_new python experiments/experiment_capacity_sensitivity.py --algo ppo_tanh_gaussian --capacities 20 30 40 50 60
 conda run -n abm_new python experiments/experiment_capacity_sensitivity.py --algo sac --capacities 20 30 40 50 60
 conda run -n abm_new python experiments/experiment_reward_design_ablation.py --total-timesteps 200000 --eval-seeds 142 143 144 --price-grid 100 150 200 --baseline-top-k 10 --no-progress-bar
+conda run -n abm_new python experiments/experiment_penalty_ablation.py --algo ppo_beta --modes no_penalty weighted_scarcity_3000 weighted_scarcity_6000 weighted_scarcity_9000
 conda run -n abm_new python experiments/experiment_policy_benchmark.py --algos ppo_tanh_gaussian sac --max-workers 5
 conda run -n abm_new python experiments/experiment_dynamic_baseline_diagnostics.py --max-workers 5
 conda run -n abm_new python experiments/experiment_mechanism_diagnostics.py --max-workers 6
@@ -108,6 +109,8 @@ For the benchmark script, note that multi-process runs with `--max-workers > 1` 
 
 For the current `idea2` customer segmentation, treat `flexible_customer_share`, `lambda_day_mismatch_biz`, and `lambda_day_mismatch_flex` as scenario parameters first, not as directly identified facts from the booking data. When studying cross-day substitution, prefer sweeping these configuration values in experiments before adding more ABM complexity.
 
+The current three-state `idea2` demand calibration uses a quantile-compressed lead-time interpretation. `ideal_offset_probs` is calibrated from the relative frequencies of historical `lead_time` 0, 1, and 2 within that short-lead subset. WTP is not calibrated directly from those narrow lead-time buckets; instead, all valid City Hotel observations are sorted by `lead_time` and split according to the same three probabilities. The resulting three ADR distributions calibrate offset-specific WTP for near-, mid-, and far-horizon preference groups. WTP is bound to the customer's original `ideal_offset` and does not change if a `flex` customer shifts to another date.
+
 Current research findings indicate two important cautions:
 
 - Reward penalties alone do not explain the extreme price structures observed in experiments; cross-day substitution in the ABM is currently the dominant driver of "low-price funnel + high-price blocking" behavior.
@@ -115,3 +118,5 @@ Current research findings indicate two important cautions:
 - In the segmented-demand version of `idea2`, the key structural question is how much substitution comes from the `flex` segment versus how much rigid demand is anchored by the `biz` segment. Keep that distinction explicit in experiment design and result interpretation.
 
 If you change the reward design, keep the configuration explicit in `configs/config.py` and preserve separate logging for revenue, total penalty, full-capacity penalty, and scarcity penalty so experimental comparisons remain interpretable.
+
+`EnvConfig.variable_cost_per_room` controls the per-accepted-room variable cost. Environment `revenue` metrics are contribution-profit metrics when this value is positive: `(price - variable_cost_per_room) * accepted_rooms`. The environment also logs `gross_revenue` and `variable_cost` separately for interpretation.

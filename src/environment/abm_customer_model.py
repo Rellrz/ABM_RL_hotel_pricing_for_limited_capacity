@@ -63,13 +63,10 @@ class HotelABMModel:
             return float(ABM_CONFIG.lambda_day_mismatch_biz)
         return float(ABM_CONFIG.lambda_day_mismatch_flex)
 
-    def _sample_wtp(self, stay_day: int) -> float:
-        if self.is_weekend(stay_day):
-            mean = self.calibration.weekend_wtp_mean
-            std = self.calibration.weekend_wtp_std
-        else:
-            mean = self.calibration.weekday_wtp_mean
-            std = self.calibration.weekday_wtp_std
+    def _sample_wtp(self, ideal_offset: int) -> float:
+        offset = int(np.clip(ideal_offset, 0, 2))
+        mean = float(self.calibration.offset_wtp_means[offset])
+        std = float(self.calibration.offset_wtp_stds[offset])
         return float(max(ABM_CONFIG.wtp_min, self.rng.normal(mean, std)))
 
     def _record_trace(
@@ -125,8 +122,7 @@ class HotelABMModel:
             customer_type = self._sample_customer_type()
             day_mismatch_penalty = self._get_day_mismatch_penalty(customer_type)
             ideal_offset = self._sample_ideal_offset()
-            stay_day = current_day + ideal_offset
-            wtp = self._sample_wtp(stay_day)
+            wtp = self._sample_wtp(ideal_offset)
             noise = self.rng.normal(0.0, ABM_CONFIG.utility_noise_std, size=3)
             utilities = (
                 wtp

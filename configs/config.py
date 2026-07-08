@@ -51,12 +51,13 @@ class EnvConfig:
     episode_days: int = 256
     price_min: float = 50.0
     price_max: float = 300.0
+    variable_cost_per_room: float = 20
     reward_mode: str = "weighted_scarcity"  # standard/no_penalty/weighted_scarcity
     full_capacity_penalty: float = 0.0
     penalty_scale_mode: str = "fixed"
     penalty_capacity_ref: int = 30
     scarcity_threshold_ratio: float = 0.3
-    scarcity_penalty_coef: float = 9000.0   # 9000.0
+    scarcity_penalty_coef: float = 0.0   # 9000.0
     scarcity_penalty_weights: tuple[float, float, float] = (0.0, 0.5, 1.0)
     start_day: int = 0
 
@@ -154,6 +155,8 @@ class ProjectConfig:
             raise ValueError("lambda_day_mismatch_flex 不能为负数。")
         if self.env.price_min >= self.env.price_max:
             raise ValueError("price_min 必须小于 price_max。")
+        if self.env.variable_cost_per_room < 0.0:
+            raise ValueError("variable_cost_per_room 不能为负数。")
         if not (0.0 < self.abm.reference_memory_alpha < 1.0):
             raise ValueError("reference_memory_alpha 必须位于 (0, 1) 内。")
         if self.env.capacity <= 0:

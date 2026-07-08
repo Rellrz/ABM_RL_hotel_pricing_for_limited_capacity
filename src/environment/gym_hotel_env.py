@@ -20,6 +20,7 @@ class GymHotelPricingEnv(gym.Env):
         seed: Optional[int] = None,
         capacity: Optional[int] = None,
         reward_mode: Optional[str] = None,
+        variable_cost_per_room: Optional[float] = None,
         full_capacity_penalty: Optional[float] = None,
         penalty_scale_mode: Optional[str] = None,
         penalty_capacity_ref: Optional[int] = None,
@@ -31,6 +32,7 @@ class GymHotelPricingEnv(gym.Env):
         self.base_seed = seed
         self.capacity = capacity
         self.reward_mode = reward_mode
+        self.variable_cost_per_room = variable_cost_per_room
         self.full_capacity_penalty = full_capacity_penalty
         self.penalty_scale_mode = penalty_scale_mode
         self.penalty_capacity_ref = penalty_capacity_ref
@@ -42,6 +44,7 @@ class GymHotelPricingEnv(gym.Env):
             random_seed=seed,
             capacity=capacity,
             reward_mode=reward_mode,
+            variable_cost_per_room=variable_cost_per_room,
             full_capacity_penalty=full_capacity_penalty,
             penalty_scale_mode=penalty_scale_mode,
             penalty_capacity_ref=penalty_capacity_ref,
@@ -72,6 +75,7 @@ class GymHotelPricingEnv(gym.Env):
                 random_seed=seed,
                 capacity=self.capacity,
                 reward_mode=self.reward_mode,
+                variable_cost_per_room=self.variable_cost_per_room,
                 full_capacity_penalty=self.full_capacity_penalty,
                 penalty_scale_mode=self.penalty_scale_mode,
                 penalty_capacity_ref=self.penalty_capacity_ref,

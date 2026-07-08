@@ -3,11 +3,13 @@ from __future__ import annotations
 import argparse
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from contextlib import contextmanager
+from dataclasses import dataclass
 import json
 import multiprocessing as mp
 from datetime import datetime
 from pathlib import Path
 import sys
+from typing import Any
 
 import pandas as pd
 
@@ -15,14 +17,33 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from configs.config import ENV_CONFIG, PATH_CONFIG
+from configs.config import ABM_CONFIG, ENV_CONFIG, PATH_CONFIG
 from src.environment.abm_customer_model import load_filtered_historical_data
 from src.training.train_ppo import EpisodeMetricsAggregator
 from src.training.algorithm_registry import get_algorithm_choices, get_algorithm_runner
 
 
-DEFAULT_CAPACITIES = [20, 30, 40, 50, 60]
-DEFAULT_MODES = ["with_penalty", "no_penalty"]
+DEFAULT_MODES = ["no_penalty", "weighted_scarcity_3000", "weighted_scarcity_6000", "weighted_scarcity_9000"]
+DEFAULT_SCENARIOS = [
+    {
+        "scenario_name": "scenario_a_cap20_flex050_lam48",
+        "capacity": 20,
+        "flexible_customer_share": 0.50,
+        "lambda_day_mismatch_flex": 48.0,
+    },
+    {
+        "scenario_name": "scenario_b_cap20_flex075_lam48",
+        "capacity": 20,
+        "flexible_customer_share": 0.75,
+        "lambda_day_mismatch_flex": 48.0,
+    },
+    {
+        "scenario_name": "scenario_c_cap20_flex100_lam48",
+        "capacity": 20,
+        "flexible_customer_share": 1.00,
+        "lambda_day_mismatch_flex": 48.0,
+    },
+]
 PLOT_METRICS = [
     "episode_revenue",
     "episode_reward",
@@ -41,18 +62,34 @@ PLOT_METRICS = [
 ]
 
 
+@dataclass(frozen=True)
+class ScenarioSpec:
+    scenario_name: str
+    capacity: int
+    flexible_customer_share: float
+    lambda_day_mismatch_flex: float
+
+
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="有无 penalty 的最小对照实验")
-    parser.add_argument("--algo", type=str, default="ppo_tanh_gaussian", choices=get_algorithm_choices(), help="训练算法")
-    parser.add_argument("--capacities", nargs="+", type=int, default=DEFAULT_CAPACITIES, help="要扫描的容量列表")
-    parser.add_argument("--modes", nargs="+", type=str, default=DEFAULT_MODES, help="对照模式列表")
+    parser = argparse.ArgumentParser(description="新 weighted-scarcity penalty 的强度消融实验")
+    parser.add_argument("--algo", type=str, default="ppo_beta", choices=get_algorithm_choices(), help="训练算法")
+    parser.add_argument(
+        "--modes",
+        nargs="+",
+        type=str,
+        default=DEFAULT_MODES,
+        help=(
+            "对照模式列表。支持 no_penalty、weighted_scarcity，"
+            "以及 weighted_scarcity_<coef>，例如 weighted_scarcity_9000。"
+        ),
+    )
     parser.add_argument("--train-seed", type=int, default=None, help="训练用随机种子，默认使用所选算法配置")
     parser.add_argument("--eval-seed", type=int, default=None, help="评估用新随机种子，默认使用 train_seed + 100")
     parser.add_argument(
         "--total-timesteps",
         type=int,
         default=None,
-        help="每个容量-模式组合的训练步数，默认使用所选算法配置",
+        help="每个场景-模式组合的训练步数，默认使用所选算法配置",
     )
     parser.add_argument(
         "--run-prefix",
@@ -69,52 +106,87 @@ def parse_args() -> argparse.Namespace:
         "--max-workers",
         type=int,
         default=1,
-        help="并行进程数，设为大于 1 时会对不同组合并行训练与评估",
+        help="并行进程数，设为大于 1 时会对不同场景-模式组合并行训练与评估",
     )
     return parser.parse_args()
 
 
-def build_env_overrides(mode: str) -> dict[str, float | int | str]:
-    if mode == "with_penalty":
-        return {
-            "full_capacity_penalty": float(ENV_CONFIG.full_capacity_penalty),
-            "penalty_scale_mode": str(ENV_CONFIG.penalty_scale_mode),
-            "penalty_capacity_ref": int(ENV_CONFIG.penalty_capacity_ref),
-        }
-    if mode == "no_penalty":
-        return {
-            "full_capacity_penalty": 0.0,
-            "penalty_scale_mode": "fixed",
-            "penalty_capacity_ref": int(ENV_CONFIG.penalty_capacity_ref),
-        }
-    raise ValueError(f"未知 penalty mode: {mode}")
+def default_scenarios() -> list[ScenarioSpec]:
+    return [
+        ScenarioSpec(
+            scenario_name=str(raw["scenario_name"]),
+            capacity=int(raw["capacity"]),
+            flexible_customer_share=float(raw["flexible_customer_share"]),
+            lambda_day_mismatch_flex=float(raw["lambda_day_mismatch_flex"]),
+        )
+        for raw in DEFAULT_SCENARIOS
+    ]
 
 
 @contextmanager
-def apply_penalty_config(mode: str):
-    original_full_penalty = float(ENV_CONFIG.full_capacity_penalty)
-    original_scale_mode = str(ENV_CONFIG.penalty_scale_mode)
-    original_capacity_ref = int(ENV_CONFIG.penalty_capacity_ref)
-    original_scarcity_coef = float(ENV_CONFIG.scarcity_penalty_coef)
+def apply_abm_scenario(scenario: ScenarioSpec):
+    original_flexible_customer_share = float(ABM_CONFIG.flexible_customer_share)
+    original_lambda_day_mismatch_flex = float(ABM_CONFIG.lambda_day_mismatch_flex)
     try:
-        if mode == "with_penalty":
-            ENV_CONFIG.full_capacity_penalty = original_full_penalty
-            ENV_CONFIG.penalty_scale_mode = original_scale_mode
-            ENV_CONFIG.penalty_capacity_ref = original_capacity_ref
-            ENV_CONFIG.scarcity_penalty_coef = original_scarcity_coef
-        elif mode == "no_penalty":
-            ENV_CONFIG.full_capacity_penalty = 0.0
-            ENV_CONFIG.penalty_scale_mode = "fixed"
-            ENV_CONFIG.penalty_capacity_ref = original_capacity_ref
-            ENV_CONFIG.scarcity_penalty_coef = 0.0
-        else:
-            raise ValueError(f"未知 penalty mode: {mode}")
+        ABM_CONFIG.flexible_customer_share = float(scenario.flexible_customer_share)
+        ABM_CONFIG.lambda_day_mismatch_flex = float(scenario.lambda_day_mismatch_flex)
         yield
     finally:
-        ENV_CONFIG.full_capacity_penalty = original_full_penalty
-        ENV_CONFIG.penalty_scale_mode = original_scale_mode
-        ENV_CONFIG.penalty_capacity_ref = original_capacity_ref
-        ENV_CONFIG.scarcity_penalty_coef = original_scarcity_coef
+        ABM_CONFIG.flexible_customer_share = original_flexible_customer_share
+        ABM_CONFIG.lambda_day_mismatch_flex = original_lambda_day_mismatch_flex
+
+
+def scenario_fields(scenario: ScenarioSpec) -> dict[str, float | int | str]:
+    return {
+        "scenario_name": str(scenario.scenario_name),
+        "capacity": int(scenario.capacity),
+        "flexible_customer_share": float(scenario.flexible_customer_share),
+        "lambda_day_mismatch_flex": float(scenario.lambda_day_mismatch_flex),
+    }
+
+
+def _parse_weighted_scarcity_coef(mode: str) -> float:
+    if mode == "weighted_scarcity":
+        return float(ENV_CONFIG.scarcity_penalty_coef)
+    prefix = "weighted_scarcity_"
+    if mode.startswith(prefix):
+        return float(mode.removeprefix(prefix))
+    raise ValueError(f"未知 penalty mode: {mode}")
+
+
+def build_env_overrides(mode: str) -> dict[str, Any]:
+    if mode == "no_penalty":
+        return {
+            "reward_mode": "no_penalty",
+            "full_capacity_penalty": 0.0,
+            "penalty_capacity_ref": int(ENV_CONFIG.penalty_capacity_ref),
+            "penalty_scale_mode": "fixed",
+            "scarcity_threshold_ratio": float(ENV_CONFIG.scarcity_threshold_ratio),
+            "scarcity_penalty_coef": 0.0,
+            "scarcity_penalty_weights": [0.0, 0.5, 1.0],
+        }
+
+    coef = _parse_weighted_scarcity_coef(mode)
+    if coef < 0.0:
+        raise ValueError("weighted_scarcity penalty 系数不能为负数。")
+    return {
+        "reward_mode": "weighted_scarcity",
+        "full_capacity_penalty": 0.0,
+        "penalty_capacity_ref": int(ENV_CONFIG.penalty_capacity_ref),
+        "penalty_scale_mode": "fixed",
+        "scarcity_threshold_ratio": float(ENV_CONFIG.scarcity_threshold_ratio),
+        "scarcity_penalty_coef": float(coef),
+        "scarcity_penalty_weights": [0.0, 0.5, 1.0],
+    }
+
+
+def _format_env_overrides(env_overrides: dict[str, Any]) -> str:
+    return json.dumps(env_overrides, ensure_ascii=False, sort_keys=True)
+
+
+def validate_modes(modes: list[str]) -> None:
+    for mode in modes:
+        build_env_overrides(str(mode))
 
 
 def evaluate_policy(
@@ -124,7 +196,7 @@ def evaluate_policy(
     historical_data: pd.DataFrame,
     capacity: int,
     eval_seed: int,
-    env_overrides: dict[str, float | int | str],
+    env_overrides: dict[str, Any],
 ) -> dict[str, float]:
     eval_env = build_eval_env_fn(
         train_vec_env=train_vec_env,
@@ -154,13 +226,14 @@ def evaluate_policy(
 def plot_metric(df: pd.DataFrame, metric: str, output_dir: Path) -> None:
     import matplotlib.pyplot as plt
 
-    plt.figure(figsize=(6, 4))
+    plt.figure(figsize=(8, 4))
     for mode, group in df.groupby("penalty_mode"):
-        ordered = group.sort_values("capacity")
-        plt.plot(ordered["capacity"], ordered[metric], marker="o", linewidth=1.8, label=mode)
-    plt.xlabel("capacity")
+        ordered = group.sort_values("scenario_name")
+        plt.plot(ordered["scenario_name"], ordered[metric], marker="o", linewidth=1.8, label=mode)
+    plt.xlabel("scenario")
     plt.ylabel(metric)
-    plt.title(f"{metric} vs capacity")
+    plt.title(f"{metric} vs scenario")
+    plt.xticks(rotation=20, ha="right")
     plt.grid(True, linestyle="--", alpha=0.35)
     plt.legend()
     plt.tight_layout()
@@ -175,7 +248,8 @@ def plot_full_rate_vs_revenue(df: pd.DataFrame, output_dir: Path) -> None:
     for mode, group in df.groupby("penalty_mode"):
         plt.scatter(group["full_day_rate"], group["revenue_per_capacity_day"], s=55, alpha=0.85, label=mode)
         for _, row in group.iterrows():
-            plt.annotate(f"cap={int(row['capacity'])}", (row["full_day_rate"], row["revenue_per_capacity_day"]))
+            label = str(row["scenario_name"]).replace("scenario_", "")
+            plt.annotate(label, (row["full_day_rate"], row["revenue_per_capacity_day"]))
     plt.xlabel("full_day_rate")
     plt.ylabel("revenue_per_capacity_day")
     plt.title("full_day_rate vs revenue_per_capacity_day")
@@ -188,7 +262,7 @@ def plot_full_rate_vs_revenue(df: pd.DataFrame, output_dir: Path) -> None:
 
 def run_ablation_job(
     algo: str,
-    capacity: int,
+    scenario: ScenarioSpec,
     mode: str,
     historical_data: pd.DataFrame | None,
     train_seed: int,
@@ -204,13 +278,13 @@ def run_ablation_job(
     build_eval_env_fn = runner["build_eval_env"]
 
     env_overrides = build_env_overrides(mode)
-    run_name = f"{run_prefix}_{algo}_{mode}_cap{capacity}"
+    run_name = f"{run_prefix}_{scenario.scenario_name}_{algo}_{mode}"
 
-    with apply_penalty_config(mode):
+    with apply_abm_scenario(scenario):
         model, train_vec_env, run_dir = train_single_run_fn(
             run_name=run_name,
             historical_data=historical_data,
-            capacity=int(capacity),
+            capacity=int(scenario.capacity),
             train_seed=int(train_seed),
             total_timesteps=int(total_timesteps),
             progress_bar=not bool(no_progress_bar),
@@ -222,7 +296,7 @@ def run_ablation_job(
             train_vec_env=train_vec_env,
             build_eval_env_fn=build_eval_env_fn,
             historical_data=historical_data,
-            capacity=int(capacity),
+            capacity=int(scenario.capacity),
             eval_seed=int(eval_seed),
             env_overrides=env_overrides,
         )
@@ -233,20 +307,26 @@ def run_ablation_job(
     episode_arrivals = float(metrics["episode_arrivals"])
 
     row: dict[str, float | int | str] = {
+        **scenario_fields(scenario),
         "algo": str(algo),
         "penalty_mode": str(mode),
-        "capacity": int(capacity),
         "train_seed": int(train_seed),
         "eval_seed": int(eval_seed),
         "run_name": run_name,
         "run_dir": str(run_dir),
+        "reward_mode": str(env_overrides["reward_mode"]),
+        "reward_env_overrides": _format_env_overrides(env_overrides),
         "full_capacity_penalty": float(env_overrides["full_capacity_penalty"]),
-        "scarcity_penalty_coef": 0.0 if mode == "no_penalty" else float(ENV_CONFIG.scarcity_penalty_coef),
+        "scarcity_threshold_ratio": float(env_overrides["scarcity_threshold_ratio"]),
+        "scarcity_penalty_coef": float(env_overrides["scarcity_penalty_coef"]),
+        "scarcity_penalty_weights": json.dumps(env_overrides["scarcity_penalty_weights"], ensure_ascii=False),
     }
     row.update(metrics)
     row["penalty_revenue_ratio"] = float(episode_penalty / max(1e-8, episode_revenue))
     row["revenue_per_arrival"] = float(episode_revenue / max(1.0, episode_arrivals))
-    row["revenue_per_capacity_day"] = float(episode_revenue / max(1.0, capacity * ENV_CONFIG.episode_days))
+    row["revenue_per_capacity_day"] = float(
+        episode_revenue / max(1.0, int(scenario.capacity) * ENV_CONFIG.episode_days)
+    )
     return row
 
 
@@ -267,14 +347,15 @@ def main() -> None:
     results: list[dict[str, float | int | str]] = []
     max_workers = max(1, int(args.max_workers))
     modes = list(args.modes)
-    capacities = list(map(int, args.capacities))
-    jobs = [(mode, capacity) for mode in modes for capacity in capacities]
+    validate_modes(modes)
+    scenarios = default_scenarios()
+    jobs = [(mode, scenario) for mode in modes for scenario in scenarios]
 
     if max_workers == 1:
-        for mode, capacity in jobs:
+        for mode, scenario in jobs:
             row = run_ablation_job(
                 algo=str(args.algo),
-                capacity=int(capacity),
+                scenario=scenario,
                 mode=str(mode),
                 historical_data=historical_data,
                 train_seed=train_seed,
@@ -285,7 +366,7 @@ def main() -> None:
             )
             results.append(row)
             print(
-                f"[mode={mode}, capacity={capacity}] revenue={float(row['episode_revenue']):.2f}, "
+                f"[mode={mode}, scenario={scenario.scenario_name}] revenue={float(row['episode_revenue']):.2f}, "
                 f"full_day_rate={float(row['full_day_rate']):.4f}, "
                 f"penalty_ratio={float(row['penalty_revenue_ratio']):.6f}"
             )
@@ -296,7 +377,7 @@ def main() -> None:
                 executor.submit(
                     run_ablation_job,
                     str(args.algo),
-                    int(capacity),
+                    scenario,
                     str(mode),
                     None,
                     train_seed,
@@ -304,20 +385,21 @@ def main() -> None:
                     total_timesteps,
                     bool(args.no_progress_bar),
                     str(args.run_prefix),
-                ): (mode, capacity)
-                for mode, capacity in jobs
+                ): (mode, scenario)
+                for mode, scenario in jobs
             }
             for future in as_completed(future_to_job):
-                mode, capacity = future_to_job[future]
+                mode, scenario = future_to_job[future]
                 row = future.result()
                 results.append(row)
                 print(
-                    f"[mode={mode}, capacity={capacity}] revenue={float(row['episode_revenue']):.2f}, "
+                    f"[mode={mode}, scenario={scenario.scenario_name}] "
+                    f"revenue={float(row['episode_revenue']):.2f}, "
                     f"full_day_rate={float(row['full_day_rate']):.4f}, "
                     f"penalty_ratio={float(row['penalty_revenue_ratio']):.6f}"
                 )
 
-    results_df = pd.DataFrame(results).sort_values(["penalty_mode", "capacity"]).reset_index(drop=True)
+    results_df = pd.DataFrame(results).sort_values(["penalty_mode", "scenario_name"]).reset_index(drop=True)
     csv_path = experiment_root / "penalty_ablation_results.csv"
     results_df.to_csv(csv_path, index=False)
 
@@ -327,13 +409,15 @@ def main() -> None:
 
     summary = {
         "modes": modes,
-        "capacities": capacities,
+        "scenarios": [scenario_fields(scenario) for scenario in scenarios],
         "algo": str(args.algo),
         "train_seed": train_seed,
         "eval_seed": eval_seed,
         "total_timesteps": total_timesteps,
         "base_full_capacity_penalty": float(ENV_CONFIG.full_capacity_penalty),
         "base_scarcity_penalty_coef": float(ENV_CONFIG.scarcity_penalty_coef),
+        "base_scarcity_penalty_weights": list(map(float, ENV_CONFIG.scarcity_penalty_weights)),
+        "base_scarcity_threshold_ratio": float(ENV_CONFIG.scarcity_threshold_ratio),
         "base_penalty_scale_mode": str(ENV_CONFIG.penalty_scale_mode),
         "episode_days": int(ENV_CONFIG.episode_days),
         "max_workers": max_workers,

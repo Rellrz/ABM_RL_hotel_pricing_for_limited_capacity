@@ -17,10 +17,8 @@ class DemandCalibration:
     ideal_offset_probs: np.ndarray
     weekday_ref_price: float
     weekend_ref_price: float
-    weekday_wtp_mean: float
-    weekday_wtp_std: float
-    weekend_wtp_mean: float
-    weekend_wtp_std: float
+    offset_wtp_means: np.ndarray
+    offset_wtp_stds: np.ndarray
 
 
 def load_filtered_historical_data(csv_path: Optional[Path] = None) -> pd.DataFrame:
@@ -47,10 +45,8 @@ def build_demand_calibration(historical_data: pd.DataFrame) -> DemandCalibration
             ideal_offset_probs=np.asarray([1 / 3, 1 / 3, 1 / 3], dtype=float),
             weekday_ref_price=120.0,
             weekend_ref_price=150.0,
-            weekday_wtp_mean=140.0,
-            weekday_wtp_std=20.0,
-            weekend_wtp_mean=170.0,
-            weekend_wtp_std=25.0,
+            offset_wtp_means=np.asarray([140.0, 130.0, 110.0], dtype=float),
+            offset_wtp_stds=np.asarray([20.0, 20.0, 20.0], dtype=float),
         )
 
     df = historical_data.copy()
@@ -100,15 +96,34 @@ def build_demand_calibration(historical_data: pd.DataFrame) -> DemandCalibration
         lead_counts = lead_counts / lead_counts.sum()
 
     ref_prices = df.groupby("stay_is_weekend")[DATA_CONFIG.adr_column].mean()
-    wtp_stats = df.groupby("stay_is_weekend")[DATA_CONFIG.adr_column].agg(["mean", "std"])
 
     overall_mean = float(df[DATA_CONFIG.adr_column].mean())
     weekday_ref = float(ref_prices.get(0, overall_mean))
     weekend_ref = float(ref_prices.get(1, overall_mean))
-    weekday_mean = float(wtp_stats["mean"].get(0, weekday_ref))
-    weekday_std = float(wtp_stats["std"].get(0, max(10.0, 0.1 * weekday_mean)))
-    weekend_mean = float(wtp_stats["mean"].get(1, weekend_ref))
-    weekend_std = float(wtp_stats["std"].get(1, max(10.0, 0.1 * weekend_mean)))
+
+    sorted_df = df.sort_values(["lead_time", DATA_CONFIG.adr_column]).reset_index(drop=True)
+    n_rows = len(sorted_df)
+    first_cut = int(round(float(lead_counts[0]) * n_rows))
+    second_cut = first_cut + int(round(float(lead_counts[1]) * n_rows))
+    groups = [
+        sorted_df.iloc[:first_cut],
+        sorted_df.iloc[first_cut:second_cut],
+        sorted_df.iloc[second_cut:],
+    ]
+    offset_wtp_means = np.empty(3, dtype=float)
+    offset_wtp_stds = np.empty(3, dtype=float)
+    for idx, group in enumerate(groups):
+        adr = group[DATA_CONFIG.adr_column]
+        if adr.empty:
+            offset_wtp_means[idx] = max(ABM_CONFIG.wtp_min, overall_mean)
+            offset_wtp_stds[idx] = max(1.0, float(df[DATA_CONFIG.adr_column].std()))
+            continue
+        mean = float(adr.mean())
+        std = float(adr.std())
+        if not np.isfinite(std) or std <= 0.0:
+            std = max(1.0, 0.1 * mean)
+        offset_wtp_means[idx] = max(ABM_CONFIG.wtp_min, mean)
+        offset_wtp_stds[idx] = max(1.0, std)
 
     return DemandCalibration(
         weekday_arrival_mean=max(0.0, weekday_arrival_mean),
@@ -116,10 +131,8 @@ def build_demand_calibration(historical_data: pd.DataFrame) -> DemandCalibration
         ideal_offset_probs=lead_counts.astype(float),
         weekday_ref_price=max(ABM_CONFIG.wtp_min, weekday_ref),
         weekend_ref_price=max(ABM_CONFIG.wtp_min, weekend_ref),
-        weekday_wtp_mean=max(ABM_CONFIG.wtp_min, weekday_mean),
-        weekday_wtp_std=max(1.0, weekday_std),
-        weekend_wtp_mean=max(ABM_CONFIG.wtp_min, weekend_mean),
-        weekend_wtp_std=max(1.0, weekend_std),
+        offset_wtp_means=offset_wtp_means,
+        offset_wtp_stds=offset_wtp_stds,
     )
 
 

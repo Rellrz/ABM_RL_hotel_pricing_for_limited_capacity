@@ -18,6 +18,7 @@ class HotelEnvironment:
         random_seed: Optional[int] = None,
         capacity: Optional[int] = None,
         reward_mode: Optional[str] = None,
+        variable_cost_per_room: Optional[float] = None,
         full_capacity_penalty: Optional[float] = None,
         penalty_scale_mode: Optional[str] = None,
         penalty_capacity_ref: Optional[int] = None,
@@ -30,6 +31,11 @@ class HotelEnvironment:
         self.episode_days = int(ENV_CONFIG.episode_days)
         self.price_min = float(ENV_CONFIG.price_min)
         self.price_max = float(ENV_CONFIG.price_max)
+        self.variable_cost_per_room = float(
+            ENV_CONFIG.variable_cost_per_room if variable_cost_per_room is None else variable_cost_per_room
+        )
+        if self.variable_cost_per_room < 0.0:
+            raise ValueError("variable_cost_per_room 不能为负数。")
         self.reward_mode = str(ENV_CONFIG.reward_mode if reward_mode is None else reward_mode)
         if self.reward_mode not in {"standard", "no_penalty", "weighted_scarcity"}:
             raise ValueError(f"未知 reward_mode: {self.reward_mode}")
@@ -158,7 +164,11 @@ class HotelEnvironment:
         requests = np.asarray(demand["requests_by_offset"], dtype=np.int32)
         accepted = np.asarray(demand["accepted_by_offset"], dtype=np.int32)
         inventory_after = np.maximum(inventory_before - accepted, 0)
-        revenue_by_offset = prices * accepted.astype(np.float64)
+        gross_revenue_by_offset = prices * accepted.astype(np.float64)
+        variable_cost_by_offset = self.variable_cost_per_room * accepted.astype(np.float64)
+        revenue_by_offset = gross_revenue_by_offset - variable_cost_by_offset
+        gross_revenue = float(np.sum(gross_revenue_by_offset))
+        variable_cost = float(np.sum(variable_cost_by_offset))
         revenue = float(np.sum(revenue_by_offset))
         remaining_ratio = inventory_after.astype(np.float64) / float(self.capacity)
         reward, effective_full_penalty, full_penalty, scarcity_penalty = self._compute_reward_components(
@@ -187,7 +197,12 @@ class HotelEnvironment:
             "inventory_before": inventory_before.astype(int).tolist(),
             "inventory_after": inventory_after.astype(int).tolist(),
             "remaining_ratio": remaining_ratio.astype(float).tolist(),
+            "gross_revenue_by_offset": gross_revenue_by_offset.astype(float).tolist(),
+            "variable_cost_by_offset": variable_cost_by_offset.astype(float).tolist(),
             "revenue_by_offset": revenue_by_offset.astype(float).tolist(),
+            "gross_revenue": float(gross_revenue),
+            "variable_cost": float(variable_cost),
+            "variable_cost_per_room": float(self.variable_cost_per_room),
             "revenue": float(revenue),
             "effective_full_penalty": float(effective_full_penalty),
             "scarcity_penalty": float(scarcity_penalty),
@@ -228,7 +243,12 @@ class HotelEnvironment:
             "inventory_after": inventory_after.astype(int).tolist(),
             "remaining_ratio": remaining_ratio.astype(float).tolist(),
             "rolled_inventory": next_inventory.astype(int).tolist(),
+            "gross_revenue_by_offset": gross_revenue_by_offset.astype(float).tolist(),
+            "variable_cost_by_offset": variable_cost_by_offset.astype(float).tolist(),
             "revenue_by_offset": revenue_by_offset.astype(float).tolist(),
+            "gross_revenue": float(gross_revenue),
+            "variable_cost": float(variable_cost),
+            "variable_cost_per_room": float(self.variable_cost_per_room),
             "revenue": float(revenue),
             "effective_full_penalty": float(effective_full_penalty),
             "scarcity_penalty": float(scarcity_penalty),
