@@ -19,11 +19,7 @@ class GymHotelPricingEnv(gym.Env):
         historical_data: Optional[pd.DataFrame] = None,
         seed: Optional[int] = None,
         capacity: Optional[int] = None,
-        reward_mode: Optional[str] = None,
         variable_cost_per_room: Optional[float] = None,
-        full_capacity_penalty: Optional[float] = None,
-        penalty_scale_mode: Optional[str] = None,
-        penalty_capacity_ref: Optional[int] = None,
         scarcity_threshold_ratio: Optional[float] = None,
         scarcity_penalty_coef: Optional[float] = None,
         scarcity_penalty_weights: Optional[tuple[float, float, float] | list[float]] = None,
@@ -31,11 +27,7 @@ class GymHotelPricingEnv(gym.Env):
         super().__init__()
         self.base_seed = seed
         self.capacity = capacity
-        self.reward_mode = reward_mode
         self.variable_cost_per_room = variable_cost_per_room
-        self.full_capacity_penalty = full_capacity_penalty
-        self.penalty_scale_mode = penalty_scale_mode
-        self.penalty_capacity_ref = penalty_capacity_ref
         self.scarcity_threshold_ratio = scarcity_threshold_ratio
         self.scarcity_penalty_coef = scarcity_penalty_coef
         self.scarcity_penalty_weights = scarcity_penalty_weights
@@ -43,11 +35,7 @@ class GymHotelPricingEnv(gym.Env):
             historical_data=historical_data,
             random_seed=seed,
             capacity=capacity,
-            reward_mode=reward_mode,
             variable_cost_per_room=variable_cost_per_room,
-            full_capacity_penalty=full_capacity_penalty,
-            penalty_scale_mode=penalty_scale_mode,
-            penalty_capacity_ref=penalty_capacity_ref,
             scarcity_threshold_ratio=scarcity_threshold_ratio,
             scarcity_penalty_coef=scarcity_penalty_coef,
             scarcity_penalty_weights=scarcity_penalty_weights,
@@ -74,11 +62,7 @@ class GymHotelPricingEnv(gym.Env):
                 historical_data=self.env.abm_model.historical_data,
                 random_seed=seed,
                 capacity=self.capacity,
-                reward_mode=self.reward_mode,
                 variable_cost_per_room=self.variable_cost_per_room,
-                full_capacity_penalty=self.full_capacity_penalty,
-                penalty_scale_mode=self.penalty_scale_mode,
-                penalty_capacity_ref=self.penalty_capacity_ref,
                 scarcity_threshold_ratio=self.scarcity_threshold_ratio,
                 scarcity_penalty_coef=self.scarcity_penalty_coef,
                 scarcity_penalty_weights=self.scarcity_penalty_weights,

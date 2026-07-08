@@ -23,27 +23,8 @@ from src.training.train_ppo import EpisodeMetricsAggregator
 from src.training.algorithm_registry import get_algorithm_choices, get_algorithm_runner
 
 
-DEFAULT_MODES = ["no_penalty", "weighted_scarcity_3000", "weighted_scarcity_6000", "weighted_scarcity_9000"]
-DEFAULT_SCENARIOS = [
-    {
-        "scenario_name": "scenario_a_cap20_flex050_lam48",
-        "capacity": 20,
-        "flexible_customer_share": 0.50,
-        "lambda_day_mismatch_flex": 48.0,
-    },
-    {
-        "scenario_name": "scenario_b_cap20_flex075_lam48",
-        "capacity": 20,
-        "flexible_customer_share": 0.75,
-        "lambda_day_mismatch_flex": 48.0,
-    },
-    {
-        "scenario_name": "scenario_c_cap20_flex100_lam48",
-        "capacity": 20,
-        "flexible_customer_share": 1.00,
-        "lambda_day_mismatch_flex": 48.0,
-    },
-]
+DEFAULT_SCENARIO_FILE = PROJECT_ROOT / "configs" / "scenario_policy_training_scenarios.json"
+DEFAULT_MODES = ["scarcity_0", "scarcity_3000", "scarcity_6000", "scarcity_9000"]
 PLOT_METRICS = [
     "episode_revenue",
     "episode_reward",
@@ -71,7 +52,13 @@ class ScenarioSpec:
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="新 weighted-scarcity penalty 的强度消融实验")
+    parser = argparse.ArgumentParser(description="scarcity penalty 系数消融实验")
+    parser.add_argument(
+        "--scenario-file",
+        type=Path,
+        default=DEFAULT_SCENARIO_FILE,
+        help="JSON 场景列表文件，每个场景包含 scenario_name/capacity/flexible_customer_share/lambda_day_mismatch_flex",
+    )
     parser.add_argument("--algo", type=str, default="ppo_beta", choices=get_algorithm_choices(), help="训练算法")
     parser.add_argument(
         "--modes",
@@ -79,8 +66,7 @@ def parse_args() -> argparse.Namespace:
         type=str,
         default=DEFAULT_MODES,
         help=(
-            "对照模式列表。支持 no_penalty、weighted_scarcity，"
-            "以及 weighted_scarcity_<coef>，例如 weighted_scarcity_9000。"
+            "对照模式列表。支持 scarcity_<coef>，例如 scarcity_0、scarcity_3000、scarcity_9000。"
         ),
     )
     parser.add_argument("--train-seed", type=int, default=None, help="训练用随机种子，默认使用所选算法配置")
@@ -111,16 +97,38 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def default_scenarios() -> list[ScenarioSpec]:
-    return [
-        ScenarioSpec(
-            scenario_name=str(raw["scenario_name"]),
+def load_scenarios(path: Path) -> list[ScenarioSpec]:
+    with open(path, "r", encoding="utf-8") as file:
+        payload = json.load(file)
+    if not isinstance(payload, list):
+        raise ValueError("scenario-file 必须是 JSON list。")
+
+    scenarios: list[ScenarioSpec] = []
+    seen_names: set[str] = set()
+    for raw in payload:
+        if not isinstance(raw, dict):
+            raise ValueError("每个 scenario 必须是 JSON object。")
+        scenario = ScenarioSpec(
+            scenario_name=str(raw["scenario_name"]).strip(),
             capacity=int(raw["capacity"]),
             flexible_customer_share=float(raw["flexible_customer_share"]),
             lambda_day_mismatch_flex=float(raw["lambda_day_mismatch_flex"]),
         )
-        for raw in DEFAULT_SCENARIOS
-    ]
+        if not scenario.scenario_name:
+            raise ValueError("scenario_name 不能为空。")
+        if scenario.scenario_name in seen_names:
+            raise ValueError(f"重复 scenario_name: {scenario.scenario_name}")
+        if scenario.capacity <= 0:
+            raise ValueError(f"{scenario.scenario_name}: capacity 必须为正数。")
+        if not (0.0 <= scenario.flexible_customer_share <= 1.0):
+            raise ValueError(f"{scenario.scenario_name}: flexible_customer_share 必须位于 [0, 1]。")
+        if scenario.lambda_day_mismatch_flex < 0.0:
+            raise ValueError(f"{scenario.scenario_name}: lambda_day_mismatch_flex 不能为负数。")
+        seen_names.add(scenario.scenario_name)
+        scenarios.append(scenario)
+    if not scenarios:
+        raise ValueError("scenario-file 至少需要包含一个场景。")
+    return scenarios
 
 
 @contextmanager
@@ -145,35 +153,20 @@ def scenario_fields(scenario: ScenarioSpec) -> dict[str, float | int | str]:
     }
 
 
-def _parse_weighted_scarcity_coef(mode: str) -> float:
-    if mode == "weighted_scarcity":
+def _parse_scarcity_coef(mode: str) -> float:
+    if mode == "scarcity":
         return float(ENV_CONFIG.scarcity_penalty_coef)
-    prefix = "weighted_scarcity_"
+    prefix = "scarcity_"
     if mode.startswith(prefix):
         return float(mode.removeprefix(prefix))
-    raise ValueError(f"未知 penalty mode: {mode}")
+    raise ValueError(f"未知 scarcity mode: {mode}")
 
 
 def build_env_overrides(mode: str) -> dict[str, Any]:
-    if mode == "no_penalty":
-        return {
-            "reward_mode": "no_penalty",
-            "full_capacity_penalty": 0.0,
-            "penalty_capacity_ref": int(ENV_CONFIG.penalty_capacity_ref),
-            "penalty_scale_mode": "fixed",
-            "scarcity_threshold_ratio": float(ENV_CONFIG.scarcity_threshold_ratio),
-            "scarcity_penalty_coef": 0.0,
-            "scarcity_penalty_weights": [0.0, 0.5, 1.0],
-        }
-
-    coef = _parse_weighted_scarcity_coef(mode)
+    coef = _parse_scarcity_coef(mode)
     if coef < 0.0:
-        raise ValueError("weighted_scarcity penalty 系数不能为负数。")
+        raise ValueError("scarcity penalty 系数不能为负数。")
     return {
-        "reward_mode": "weighted_scarcity",
-        "full_capacity_penalty": 0.0,
-        "penalty_capacity_ref": int(ENV_CONFIG.penalty_capacity_ref),
-        "penalty_scale_mode": "fixed",
         "scarcity_threshold_ratio": float(ENV_CONFIG.scarcity_threshold_ratio),
         "scarcity_penalty_coef": float(coef),
         "scarcity_penalty_weights": [0.0, 0.5, 1.0],
@@ -314,9 +307,7 @@ def run_ablation_job(
         "eval_seed": int(eval_seed),
         "run_name": run_name,
         "run_dir": str(run_dir),
-        "reward_mode": str(env_overrides["reward_mode"]),
-        "reward_env_overrides": _format_env_overrides(env_overrides),
-        "full_capacity_penalty": float(env_overrides["full_capacity_penalty"]),
+        "env_overrides": _format_env_overrides(env_overrides),
         "scarcity_threshold_ratio": float(env_overrides["scarcity_threshold_ratio"]),
         "scarcity_penalty_coef": float(env_overrides["scarcity_penalty_coef"]),
         "scarcity_penalty_weights": json.dumps(env_overrides["scarcity_penalty_weights"], ensure_ascii=False),
@@ -348,7 +339,8 @@ def main() -> None:
     max_workers = max(1, int(args.max_workers))
     modes = list(args.modes)
     validate_modes(modes)
-    scenarios = default_scenarios()
+    scenario_file = Path(args.scenario_file)
+    scenarios = load_scenarios(scenario_file)
     jobs = [(mode, scenario) for mode in modes for scenario in scenarios]
 
     if max_workers == 1:
@@ -409,16 +401,15 @@ def main() -> None:
 
     summary = {
         "modes": modes,
+        "scenario_file": str(scenario_file),
         "scenarios": [scenario_fields(scenario) for scenario in scenarios],
         "algo": str(args.algo),
         "train_seed": train_seed,
         "eval_seed": eval_seed,
         "total_timesteps": total_timesteps,
-        "base_full_capacity_penalty": float(ENV_CONFIG.full_capacity_penalty),
         "base_scarcity_penalty_coef": float(ENV_CONFIG.scarcity_penalty_coef),
         "base_scarcity_penalty_weights": list(map(float, ENV_CONFIG.scarcity_penalty_weights)),
         "base_scarcity_threshold_ratio": float(ENV_CONFIG.scarcity_threshold_ratio),
-        "base_penalty_scale_mode": str(ENV_CONFIG.penalty_scale_mode),
         "episode_days": int(ENV_CONFIG.episode_days),
         "max_workers": max_workers,
         "results_csv": str(csv_path),

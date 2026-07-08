@@ -19,7 +19,6 @@ METRIC_BASE_NAMES = [
     "episode_revenue",
     "episode_reward",
     "episode_penalty",
-    "episode_full_penalty",
     "episode_scarcity_penalty",
     "episode_acceptance_rate",
     "avg_price_day0",

@@ -5,6 +5,7 @@
 This repository currently implements the baseline model described in `idea2.md`. The current `idea2` baseline uses a two-segment customer ABM: `biz` customers mostly stick to their ideal stay date, while `flex` customers can shift across the three-day window in response to price. Treat `idea.md` as a future extension, not as part of the current acceptance scope.
 
 - `configs/config.py`: dataclass-based data, train/eval year split, ABM, environment, PPO, SAC, and path settings.
+- `configs/scenario_policy_training_scenarios.json`: shared scenario list for scenario-policy training and scarcity-penalty ablation experiments.
 - `src/environment/`: customer ABM, core hotel simulation, and Gymnasium wrapper.
 - `src/utils/preprocess_data.py`: historical-data loading and demand calibration.
 - `src/training/train_ppo.py`: reusable Stable-Baselines3 PPO trainer implementation.
@@ -15,13 +16,10 @@ This repository currently implements the baseline model described in `idea2.md`.
 - `src/baseline/pricing_baselines.py`: reusable static, weekday/weekend static, and inventory-protection baseline policies and search helpers.
 - `experiments/experiment_train_single_algo.py`: simple single-run training entry point; supports `--algo`.
 - `experiments/experiment_capacity_sensitivity.py`: capacity sensitivity experiment entry point with training, evaluation, CSV export, and single-metric plots. It supports multi-process execution across capacities and `--algo`.
-- `experiments/experiment_penalty_scaling.py`: penalty scaling experiment entry point; supports `--algo`.
-- `experiments/experiment_penalty_ablation.py`: new weighted-scarcity penalty ablation entry point; supports `--algo` and modes such as `no_penalty`, `weighted_scarcity_3000`, `weighted_scarcity_6000`, and `weighted_scarcity_9000`.
-- `experiments/experiment_reward_design_ablation.py`: PPO-beta reward-design ablation comparing the original reward, no-penalty reward, and weighted scarcity reward under the same scenario.
+- `experiments/experiment_penalty_ablation.py`: scarcity penalty coefficient ablation entry point; supports `--algo` and modes such as `scarcity_0`, `scarcity_3000`, `scarcity_6000`, and `scarcity_9000`.
 - `experiments/experiment_policy_benchmark.py`: learned-policy benchmark entry point for hard upper bound plus strong baselines; supports both `--algo` and `--algos` for multi-algorithm comparison in one run.
 - `experiments/experiment_dynamic_baseline_diagnostics.py`: baseline-only diagnostic entry point for testing whether global static, weekday/weekend static, or inventory-protection policies reveal dynamic pricing room.
 - `experiments/experiment_mechanism_diagnostics.py`: mechanism-grid diagnostic entry point that sweeps `flexible_customer_share`, `lambda_day_mismatch_flex`, and capacity without training RL policies.
-- `train_ppo.py`: thin compatibility wrapper that forwards to `src/training/train_ppo.py`.
 - `datasets/`: source dataset and exploratory notebook.
 - `outputs/`: generated models, experiment summaries, and TensorBoard logs; avoid committing new run artifacts unless required for reproducibility.
 
@@ -43,13 +41,13 @@ conda run -n abm_new python experiments/experiment_train_single_algo.py --algo p
 conda run -n abm_new python experiments/experiment_train_single_algo.py --algo sac
 conda run -n abm_new python experiments/experiment_capacity_sensitivity.py --algo ppo_tanh_gaussian --capacities 20 30 40 50 60
 conda run -n abm_new python experiments/experiment_capacity_sensitivity.py --algo sac --capacities 20 30 40 50 60
-conda run -n abm_new python experiments/experiment_reward_design_ablation.py --total-timesteps 200000 --eval-seeds 142 143 144 --price-grid 100 150 200 --baseline-top-k 10 --no-progress-bar
-conda run -n abm_new python experiments/experiment_penalty_ablation.py --algo ppo_beta --modes no_penalty weighted_scarcity_3000 weighted_scarcity_6000 weighted_scarcity_9000
+conda run -n abm_new python experiments/experiment_penalty_ablation.py --algo ppo_beta --modes scarcity_0 scarcity_3000 scarcity_6000 scarcity_9000
+conda run -n abm_new python experiments/experiment_scenario_policy_training.py --scenario-file configs/scenario_policy_training_scenarios.json --algos sac ppo_beta
 conda run -n abm_new python experiments/experiment_policy_benchmark.py --algos ppo_tanh_gaussian sac --max-workers 5
 conda run -n abm_new python experiments/experiment_dynamic_baseline_diagnostics.py --max-workers 5
 conda run -n abm_new python experiments/experiment_mechanism_diagnostics.py --max-workers 6
 tensorboard --logdir outputs/tensorboard
-conda run -n abm_new python -m compileall -q configs src experiments train_ppo.py
+conda run -n abm_new python -m compileall -q configs src experiments
 ```
 
 The training commands use the active values in `configs/config.py`. For quick validation, temporarily reduce `total_timesteps` and `episode_days`, but do not commit debug-only values. When an experiment script supports both `--algo` and `--algos`, prefer `--algos` only for benchmarks or direct cross-algorithm comparison; use `--algo` for simpler single-algorithm sweeps.
@@ -105,6 +103,8 @@ For PPO action-distribution experiments, use the independent algorithm names exp
 
 For baseline experimentation, keep reusable pricing policies and search helpers under `src/baseline/`. Experiment scripts should orchestrate scenarios, outputs, and plots, but should not duplicate baseline policy implementations.
 
+For scenario-specific experiments, keep the canonical scenario list in `configs/scenario_policy_training_scenarios.json`. `experiment_scenario_policy_training.py` and `experiment_penalty_ablation.py` should read this JSON via `--scenario-file` rather than hard-coding scenario parameters.
+
 For the benchmark script, note that multi-process runs with `--max-workers > 1` may not show Stable-Baselines3's per-worker progress bars cleanly in the main terminal. In the current multi-algorithm benchmark, each worker computes baseline searches before launching RL training, so visible training progress may appear delayed even when training is running correctly.
 
 For the current `idea2` customer segmentation, treat `flexible_customer_share`, `lambda_day_mismatch_biz`, and `lambda_day_mismatch_flex` as scenario parameters first, not as directly identified facts from the booking data. When studying cross-day substitution, prefer sweeping these configuration values in experiments before adding more ABM complexity.
@@ -117,6 +117,6 @@ Current research findings indicate two important cautions:
 - `day0` being relatively cheaper is not automatically a bug, because it has the shortest remaining selling horizon. The modeling concern is when this mild dynamic-pricing effect is amplified into extreme cross-day funneling.
 - In the segmented-demand version of `idea2`, the key structural question is how much substitution comes from the `flex` segment versus how much rigid demand is anchored by the `biz` segment. Keep that distinction explicit in experiment design and result interpretation.
 
-If you change the reward design, keep the configuration explicit in `configs/config.py` and preserve separate logging for revenue, total penalty, full-capacity penalty, and scarcity penalty so experimental comparisons remain interpretable.
+The environment uses a single reward definition: contribution profit minus weighted scarcity penalty. Set `EnvConfig.scarcity_penalty_coef=0.0` for the no-scarcity-penalty case. Preserve separate logging for contribution-profit revenue, total penalty, and scarcity penalty so experimental comparisons remain interpretable.
 
 `EnvConfig.variable_cost_per_room` controls the per-accepted-room variable cost. Environment `revenue` metrics are contribution-profit metrics when this value is positive: `(price - variable_cost_per_room) * accepted_rooms`. The environment also logs `gross_revenue` and `variable_cost` separately for interpretation.

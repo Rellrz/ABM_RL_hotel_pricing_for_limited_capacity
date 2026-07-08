@@ -52,12 +52,8 @@ class EnvConfig:
     price_min: float = 50.0
     price_max: float = 300.0
     variable_cost_per_room: float = 20
-    reward_mode: str = "weighted_scarcity"  # standard/no_penalty/weighted_scarcity
-    full_capacity_penalty: float = 0.0
-    penalty_scale_mode: str = "fixed"
-    penalty_capacity_ref: int = 30
     scarcity_threshold_ratio: float = 0.3
-    scarcity_penalty_coef: float = 0.0   # 9000.0
+    scarcity_penalty_coef: float = 0.0
     scarcity_penalty_weights: tuple[float, float, float] = (0.0, 0.5, 1.0)
     start_day: int = 0
 
@@ -163,12 +159,6 @@ class ProjectConfig:
             raise ValueError("capacity 必须为正数。")
         if self.env.episode_days <= 0:
             raise ValueError("episode_days 必须为正数。")
-        if self.env.reward_mode not in {"standard", "no_penalty", "weighted_scarcity"}:
-            raise ValueError("reward_mode 仅支持 'standard', 'no_penalty' 或 'weighted_scarcity'。")
-        if self.env.penalty_scale_mode not in {"fixed", "linear_capacity"}:
-            raise ValueError("penalty_scale_mode 仅支持 'fixed' 或 'linear_capacity'。")
-        if self.env.penalty_capacity_ref <= 0:
-            raise ValueError("penalty_capacity_ref 必须为正数。")
         if not (0.0 < self.env.scarcity_threshold_ratio < 1.0):
             raise ValueError("scarcity_threshold_ratio 必须位于 (0, 1) 内。")
         if self.env.scarcity_penalty_coef < 0.0:

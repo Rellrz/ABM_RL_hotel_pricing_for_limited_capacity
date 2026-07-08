@@ -20,7 +20,6 @@ class EpisodeMetricsAggregator:
     def reset(self) -> None:
         self.episode_revenue = 0.0
         self.episode_penalty = 0.0
-        self.episode_full_penalty = 0.0
         self.episode_scarcity_penalty = 0.0
         self.episode_arrivals = 0.0
         self.episode_accepted = 0.0
@@ -36,9 +35,8 @@ class EpisodeMetricsAggregator:
 
     def update(self, info: dict[str, Any]) -> None:
         self.episode_revenue += float(info.get("revenue", 0.0))
-        self.episode_full_penalty += float(info.get("full_penalty", 0.0))
         self.episode_scarcity_penalty += float(info.get("scarcity_penalty", 0.0))
-        self.episode_penalty += float(info.get("total_penalty", info.get("full_penalty", 0.0)))
+        self.episode_penalty += float(info.get("total_penalty", info.get("scarcity_penalty", 0.0)))
         self.episode_arrivals += float(info.get("arrivals", 0.0))
         accepted = np.asarray(info.get("accepted_by_offset", [0.0, 0.0, 0.0]), dtype=float)
         rejected = np.asarray(info.get("rejected_by_capacity", [0.0, 0.0, 0.0]), dtype=float)
@@ -72,7 +70,6 @@ class EpisodeMetricsAggregator:
         return {
             "episode_revenue": float(self.episode_revenue),
             "episode_penalty": float(self.episode_penalty),
-            "episode_full_penalty": float(self.episode_full_penalty),
             "episode_scarcity_penalty": float(self.episode_scarcity_penalty),
             "episode_arrivals": float(self.episode_arrivals),
             "episode_accepted": float(self.episode_accepted),
