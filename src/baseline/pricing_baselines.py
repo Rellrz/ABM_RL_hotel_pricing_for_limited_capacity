@@ -121,8 +121,8 @@ def get_weekday_weekend_static_policy(
     weekend = np.asarray(weekend_prices, dtype=np.float32)
 
     def _policy(obs: np.ndarray) -> np.ndarray:
-        is_weekend = bool(float(obs[1]) >= 0.5)
-        return weekend if is_weekend else weekday
+        is_weekday_by_offset = np.asarray(obs[0:3], dtype=np.float32)
+        return np.where(is_weekday_by_offset >= 0.5, weekday, weekend).astype(np.float32)
 
     return _policy
 
@@ -135,7 +135,7 @@ def get_inventory_protection_policy(
     base = np.asarray(base_prices, dtype=np.float32)
 
     def _policy(obs: np.ndarray) -> np.ndarray:
-        inventory = np.asarray(obs[2:5], dtype=np.float32)
+        inventory = np.asarray(obs[3:6], dtype=np.float32)
         scarcity = 1.0 - inventory / max(1.0, float(capacity))
         prices = base + float(scarcity_alpha) * scarcity
         return np.clip(prices, float(ENV_CONFIG.price_min), float(ENV_CONFIG.price_max))

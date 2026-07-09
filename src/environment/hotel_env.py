@@ -58,6 +58,15 @@ class HotelEnvironment:
     def _is_weekend(self, day: int) -> int:
         return 1 if (day % 7) in (5, 6) else 0
 
+    def _is_weekday(self, day: int) -> int:
+        return 0 if self._is_weekend(day) else 1
+
+    def _window_is_weekday(self, base_day: int) -> np.ndarray:
+        return np.asarray(
+            [self._is_weekday(base_day + offset) for offset in range(self.window_size)],
+            dtype=np.float64,
+        )
+
     def _initial_reference_window(self, base_day: int) -> np.ndarray:
         return np.asarray(
             [self.abm_model.get_reference_price_baseline(base_day + offset) for offset in range(self.window_size)],
@@ -81,6 +90,7 @@ class HotelEnvironment:
         return {
             "weekday_index": self._day_index(self.current_day),
             "is_weekend": self._is_weekend(self.current_day),
+            "is_weekday_by_offset": self._window_is_weekday(self.current_day),
             "inventory": self.inventory_window.astype(np.float64).copy(),
             "reference_prices": self.reference_price_window.astype(np.float64).copy(),
             "day_mod_7": int(self.current_day % 7),
@@ -91,15 +101,15 @@ class HotelEnvironment:
         state = self._build_state()
         return np.asarray(
             [
-                float(state["weekday_index"]),
-                float(state["is_weekend"]),
+                float(state["is_weekday_by_offset"][0]),
+                float(state["is_weekday_by_offset"][1]),
+                float(state["is_weekday_by_offset"][2]),
                 float(state["inventory"][0]),
                 float(state["inventory"][1]),
                 float(state["inventory"][2]),
                 float(state["reference_prices"][0]),
                 float(state["reference_prices"][1]),
                 float(state["reference_prices"][2]),
-                float(state["day_mod_7"]),
             ],
             dtype=np.float32,
         )

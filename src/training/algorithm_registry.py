@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from configs.config import PPO_CONFIG, SAC_CONFIG
-from src.training import train_ppo, train_sac
+from configs.config import PPO_CONFIG, SAC_CONFIG, TD3_CONFIG, TQC_CONFIG
+from src.training import train_ppo, train_sac, train_td3, train_tqc
 
 
 def train_ppo_standard(*args, **kwargs):
@@ -89,6 +89,24 @@ ALGORITHM_REGISTRY: dict[str, dict[str, Any]] = {
         "config": SAC_CONFIG,
         "train_single_run": train_sac.train_single_run,
         "build_eval_env": train_sac.build_eval_env,
+    },
+    "td3": {
+        "label": "td3",
+        "family": "td3",
+        "policy_variant": None,
+        "default_run_name": TD3_CONFIG.run_name,
+        "config": TD3_CONFIG,
+        "train_single_run": train_td3.train_single_run,
+        "build_eval_env": train_td3.build_eval_env,
+    },
+    "tqc": {
+        "label": "tqc",
+        "family": "tqc",
+        "policy_variant": None,
+        "default_run_name": TQC_CONFIG.run_name,
+        "config": TQC_CONFIG,
+        "train_single_run": train_tqc.train_single_run,
+        "build_eval_env": train_tqc.build_eval_env,
     },
 }
 

@@ -117,6 +117,63 @@ class SACConfig:
 
 
 @dataclass
+class TD3Config:
+    total_timesteps: int = 512000
+    learning_rate: float = 3e-4
+    buffer_size: int = 200000
+    learning_starts: int = 1000
+    batch_size: int = 256
+    tau: float = 0.005
+    gamma: float = 0.99
+    train_freq: int = 1
+    gradient_steps: int = 1
+    action_noise_std: float = 0.1
+    policy_delay: int = 2
+    target_policy_noise: float = 0.2
+    target_noise_clip: float = 0.5
+    actor_net_arch: tuple[int, int] = (256, 256)
+    critic_net_arch: tuple[int, int] = (256, 256)
+    seed: int = 42
+    device: str = "auto"
+    normalize_obs: bool = True
+    normalize_reward: bool = True
+    reward_clip: float = 10.0
+    obs_clip: float = 10.0
+    save_name: str = "td3_idea2_hotel"
+    run_name: str = "idea2_td3"
+    log_interval: int = 10
+
+
+@dataclass
+class TQCConfig:
+    total_timesteps: int = 512000
+    learning_rate: float = 3e-4
+    buffer_size: int = 200000
+    learning_starts: int = 1000
+    batch_size: int = 256
+    tau: float = 0.005
+    gamma: float = 0.99
+    train_freq: int = 1
+    gradient_steps: int = 1
+    ent_coef: str = "auto"
+    target_entropy: str = "auto"
+    top_quantiles_to_drop_per_net: int = 2
+    n_quantiles: int = 25
+    n_critics: int = 2
+    actor_net_arch: tuple[int, int] = (256, 256)
+    critic_net_arch: tuple[int, int] = (256, 256)
+    seed: int = 42
+    device: str = "auto"
+    normalize_obs: bool = True
+    normalize_reward: bool = True
+    reward_clip: float = 10.0
+    obs_clip: float = 10.0
+    save_name: str = "tqc_idea2_hotel"
+    run_name: str = "idea2_tqc"
+    log_interval: int = 10
+
+
+@dataclass
 class WarmStartConfig:
     demo_episodes: int = 100
     demo_seed: int = 314
@@ -134,6 +191,8 @@ class ProjectConfig:
     env: EnvConfig = field(default_factory=EnvConfig)
     ppo: PPOConfig = field(default_factory=PPOConfig)
     sac: SACConfig = field(default_factory=SACConfig)
+    td3: TD3Config = field(default_factory=TD3Config)
+    tqc: TQCConfig = field(default_factory=TQCConfig)
     warm_start: WarmStartConfig = field(default_factory=WarmStartConfig)
 
     def validate(self) -> None:
@@ -184,6 +243,32 @@ class ProjectConfig:
             raise ValueError("truncated_gaussian_d_min 必须位于 (0, 1] 内。")
         if self.ppo.beta_min_concentration <= 0.0:
             raise ValueError("beta_min_concentration 必须为正数。")
+        if self.td3.buffer_size <= 0:
+            raise ValueError("td3.buffer_size 必须为正数。")
+        if self.td3.learning_starts < 0:
+            raise ValueError("td3.learning_starts 不能为负数。")
+        if self.td3.batch_size <= 0:
+            raise ValueError("td3.batch_size 必须为正数。")
+        if self.td3.action_noise_std < 0.0:
+            raise ValueError("td3.action_noise_std 不能为负数。")
+        if self.td3.policy_delay <= 0:
+            raise ValueError("td3.policy_delay 必须为正数。")
+        if self.td3.target_policy_noise < 0.0:
+            raise ValueError("td3.target_policy_noise 不能为负数。")
+        if self.td3.target_noise_clip < 0.0:
+            raise ValueError("td3.target_noise_clip 不能为负数。")
+        if self.tqc.buffer_size <= 0:
+            raise ValueError("tqc.buffer_size 必须为正数。")
+        if self.tqc.learning_starts < 0:
+            raise ValueError("tqc.learning_starts 不能为负数。")
+        if self.tqc.batch_size <= 0:
+            raise ValueError("tqc.batch_size 必须为正数。")
+        if self.tqc.top_quantiles_to_drop_per_net < 0:
+            raise ValueError("tqc.top_quantiles_to_drop_per_net 不能为负数。")
+        if self.tqc.n_quantiles <= 0:
+            raise ValueError("tqc.n_quantiles 必须为正数。")
+        if self.tqc.n_critics <= 0:
+            raise ValueError("tqc.n_critics 必须为正数。")
         if self.warm_start.demo_episodes <= 0:
             raise ValueError("warm_start.demo_episodes 必须为正数。")
         if self.warm_start.bc_epochs <= 0:
@@ -209,6 +294,8 @@ ABM_CONFIG = CONFIG.abm
 ENV_CONFIG = CONFIG.env
 PPO_CONFIG = CONFIG.ppo
 SAC_CONFIG = CONFIG.sac
+TD3_CONFIG = CONFIG.td3
+TQC_CONFIG = CONFIG.tqc
 WARM_START_CONFIG = CONFIG.warm_start
 
 
@@ -224,6 +311,8 @@ __all__ = [
     "EnvConfig",
     "PPOConfig",
     "SACConfig",
+    "TD3Config",
+    "TQCConfig",
     "WarmStartConfig",
     "ProjectConfig",
     "CONFIG",
@@ -233,6 +322,8 @@ __all__ = [
     "ENV_CONFIG",
     "PPO_CONFIG",
     "SAC_CONFIG",
+    "TD3_CONFIG",
+    "TQC_CONFIG",
     "WARM_START_CONFIG",
     "get_config",
 ]

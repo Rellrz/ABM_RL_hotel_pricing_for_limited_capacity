@@ -246,10 +246,11 @@ def get_heuristic_policy(
     base = np.asarray(base_prices, dtype=np.float32)
 
     def _policy(obs: np.ndarray) -> np.ndarray:
-        is_weekend = float(obs[1])
-        inventory = np.asarray(obs[2:5], dtype=np.float32)
+        is_weekday_by_offset = np.asarray(obs[0:3], dtype=np.float32)
+        is_weekend_by_offset = 1.0 - is_weekday_by_offset
+        inventory = np.asarray(obs[3:6], dtype=np.float32)
         scarcity = 1.0 - inventory / max(1.0, float(capacity))
-        prices = base + float(scarcity_alpha) * scarcity + float(weekend_bonus) * is_weekend
+        prices = base + float(scarcity_alpha) * scarcity + float(weekend_bonus) * is_weekend_by_offset
         prices = prices + np.asarray([0.0, day_premium, 2.0 * day_premium], dtype=np.float32)
         return np.clip(prices, float(ENV_CONFIG.price_min), float(ENV_CONFIG.price_max))
 

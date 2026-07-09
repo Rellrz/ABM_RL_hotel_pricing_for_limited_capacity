@@ -2,5 +2,6 @@ numpy==1.24.3
 pandas==2.3.3
 gymnasium==1.2.3
 stable-baselines3==2.7.1
+sb3-contrib==2.7.1
 tensorboard==2.20.0
 tqdm==4.67.1

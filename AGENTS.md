@@ -4,7 +4,7 @@
 
 This repository currently implements the baseline model described in `idea2.md`. The current `idea2` baseline uses a two-segment customer ABM: `biz` customers mostly stick to their ideal stay date, while `flex` customers can shift across the three-day window in response to price. Treat `idea.md` as a future extension, not as part of the current acceptance scope.
 
-- `configs/config.py`: dataclass-based data, train/eval year split, ABM, environment, PPO, SAC, and path settings.
+- `configs/config.py`: dataclass-based data, train/eval year split, ABM, environment, PPO, SAC, TD3, TQC, and path settings.
 - `configs/scenario_policy_training_scenarios.json`: shared scenario list for scenario-policy training and scarcity-penalty ablation experiments.
 - `src/environment/`: customer ABM, core hotel simulation, and Gymnasium wrapper.
 - `src/utils/preprocess_data.py`: historical-data loading and demand calibration.
@@ -12,7 +12,9 @@ This repository currently implements the baseline model described in `idea2.md`.
 - `src/training/beta_policy.py`: PPO actor-critic policy using a Beta action distribution mapped to bounded continuous pricing actions.
 - `src/training/truncated_gaussian_policy.py`: PPO actor-critic policies using truncated Gaussian and scale-adjusted truncated Gaussian action distributions for bounded continuous pricing actions.
 - `src/training/train_sac.py`: reusable Stable-Baselines3 SAC trainer implementation with bounded continuous actions handled by the algorithm.
-- `src/training/algorithm_registry.py`: central algorithm registry that exposes `ppo_standard`, `ppo_tanh_gaussian`, `ppo_truncated_gaussian`, `ppo_scale_adjusted_truncated_gaussian`, `ppo_beta`, and `sac` as independent experiment algorithms.
+- `src/training/train_td3.py`: reusable Stable-Baselines3 TD3 trainer implementation for deterministic off-policy continuous control.
+- `src/training/train_tqc.py`: reusable SB3-Contrib TQC trainer implementation for quantile-critic off-policy continuous control.
+- `src/training/algorithm_registry.py`: central algorithm registry that exposes `ppo_standard`, `ppo_tanh_gaussian`, `ppo_truncated_gaussian`, `ppo_scale_adjusted_truncated_gaussian`, `ppo_beta`, `sac`, `td3`, and `tqc` as independent experiment algorithms.
 - `src/baseline/pricing_baselines.py`: reusable static, weekday/weekend static, and inventory-protection baseline policies and search helpers.
 - `experiments/experiment_train_single_algo.py`: simple single-run training entry point; supports `--algo`.
 - `experiments/experiment_capacity_sensitivity.py`: capacity sensitivity experiment entry point with training, evaluation, CSV export, and single-metric plots. It supports multi-process execution across capacities and `--algo`.
@@ -39,10 +41,12 @@ conda run -n abm_new python ...
 pip install -r requirements.txt
 conda run -n abm_new python experiments/experiment_train_single_algo.py --algo ppo_tanh_gaussian
 conda run -n abm_new python experiments/experiment_train_single_algo.py --algo sac
+conda run -n abm_new python experiments/experiment_train_single_algo.py --algo td3
+conda run -n abm_new python experiments/experiment_train_single_algo.py --algo tqc
 conda run -n abm_new python experiments/experiment_capacity_sensitivity.py --algo ppo_tanh_gaussian --capacities 20 30 40 50 60
 conda run -n abm_new python experiments/experiment_capacity_sensitivity.py --algo sac --capacities 20 30 40 50 60
 conda run -n abm_new python experiments/experiment_penalty_ablation.py --algo ppo_beta --modes scarcity_0 scarcity_3000 scarcity_6000 scarcity_9000 --eval-seeds 142 143 144
-conda run -n abm_new python experiments/experiment_scenario_policy_training.py --scenario-file configs/scenario_policy_training_scenarios.json --algos sac ppo_beta
+conda run -n abm_new python experiments/experiment_scenario_policy_training.py --scenario-file configs/scenario_policy_training_scenarios.json --algos sac td3 tqc ppo_beta
 conda run -n abm_new python experiments/experiment_policy_benchmark.py --algos ppo_tanh_gaussian sac --max-workers 5
 conda run -n abm_new python experiments/experiment_dynamic_baseline_diagnostics.py --max-workers 5
 conda run -n abm_new python experiments/experiment_mechanism_diagnostics.py --max-workers 6
@@ -97,7 +101,7 @@ For routine research iteration, prefer changing `configs/config.py`, experiment 
 
 The canonical temporal generalization split is configured in `DataConfig`: `train_years=(2016,)` and `eval_years=(2017,)` for City Hotel by default. Training scripts and learned-policy experiments should train on `load_train_historical_data()` and evaluate on `load_eval_historical_data()`. Baseline search/parameter selection should also use the training split, with reported performance evaluated on the eval split, unless an experiment is explicitly labeled as an oracle eval-set benchmark.
 
-For algorithm experimentation, prefer adding new trainers behind `src/training/algorithm_registry.py` and reusing the shared `train_single_run` / `build_eval_env` interface rather than hard-coding `if algo == ...` branches throughout experiment scripts. Keep experiment outputs algorithm-labeled in run names, CSV rows, and summary files.
+For algorithm experimentation, prefer adding new trainers behind `src/training/algorithm_registry.py` and reusing the shared `train_single_run` / `build_eval_env` interface rather than hard-coding `if algo == ...` branches throughout experiment scripts. Keep experiment outputs algorithm-labeled in run names, CSV rows, and summary files. TQC uses `sb3-contrib`; make sure `pip install -r requirements.txt` has been run in the active environment before launching `--algo tqc`.
 
 For PPO action-distribution experiments, use the independent algorithm names exposed by `src/training/algorithm_registry.py`: `ppo_standard`, `ppo_tanh_gaussian`, `ppo_truncated_gaussian`, `ppo_scale_adjusted_truncated_gaussian`, and `ppo_beta`. The registry wrappers set `PPOConfig.policy_variant` for each run; experiment scripts should not manually mutate `PPO_CONFIG.policy_variant`. Treat `ppo_tanh_gaussian` as the squashed/logit-normal-style bounded policy, `ppo_truncated_gaussian` / `ppo_scale_adjusted_truncated_gaussian` as the truncated-normal alternatives, and `ppo_beta` as the bounded Beta-distribution alternative for diagnosing boundary-action bias.
 
@@ -112,6 +116,8 @@ For the current `idea2` customer segmentation, treat `flexible_customer_share`, 
 The current three-state `idea2` demand calibration uses a quantile-compressed lead-time interpretation. `ideal_offset_probs` is calibrated from the relative frequencies of historical `lead_time` 0, 1, and 2 within that short-lead subset. WTP is not calibrated directly from those narrow lead-time buckets; instead, all valid City Hotel observations are sorted by `lead_time` and split according to the same three probabilities. The resulting three ADR distributions calibrate offset-specific WTP for near-, mid-, and far-horizon preference groups. WTP is bound to the customer's original `ideal_offset` and does not change if a `flex` customer shifts to another date.
 
 Arrival-rate calibration uses all valid City Hotel booking dates so the weekday/weekend arrival gap remains visible: `booking_date = arrival_date - lead_time`, with all lead times retained for this count. In the current three-day ABM, simulation day `t` exposes offset-specific demand in the selling window by combining those calibrated weekday/weekend arrival means with `ideal_offset_probs`: offset `0` uses day `t`, offset `1` uses day `t+1`, and offset `2` uses day `t+2`. Keep this distinction explicit: preprocessing uses booking-date counts to estimate the arrival scale, while the ABM uses the three offset buckets to expose demand in the rolling pricing window.
+
+The current environment observation is a 9-dimensional vector ordered as: `is_weekday_day0`, `is_weekday_day1`, `is_weekday_day2`, `inventory_day0`, `inventory_day1`, `inventory_day2`, `reference_price_day0`, `reference_price_day1`, `reference_price_day2`. This keeps the state dimension fixed while aligning date information directly with the three price actions. Policies or baselines that read raw observations should use `obs[0:3]` for the three weekday flags, `obs[3:6]` for inventory, and `obs[6:9]` for reference prices.
 
 Current research findings indicate two important cautions:
 
