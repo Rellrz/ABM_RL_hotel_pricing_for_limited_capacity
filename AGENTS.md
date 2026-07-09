@@ -41,7 +41,7 @@ conda run -n abm_new python experiments/experiment_train_single_algo.py --algo p
 conda run -n abm_new python experiments/experiment_train_single_algo.py --algo sac
 conda run -n abm_new python experiments/experiment_capacity_sensitivity.py --algo ppo_tanh_gaussian --capacities 20 30 40 50 60
 conda run -n abm_new python experiments/experiment_capacity_sensitivity.py --algo sac --capacities 20 30 40 50 60
-conda run -n abm_new python experiments/experiment_penalty_ablation.py --algo ppo_beta --modes scarcity_0 scarcity_3000 scarcity_6000 scarcity_9000
+conda run -n abm_new python experiments/experiment_penalty_ablation.py --algo ppo_beta --modes scarcity_0 scarcity_3000 scarcity_6000 scarcity_9000 --eval-seeds 142 143 144
 conda run -n abm_new python experiments/experiment_scenario_policy_training.py --scenario-file configs/scenario_policy_training_scenarios.json --algos sac ppo_beta
 conda run -n abm_new python experiments/experiment_policy_benchmark.py --algos ppo_tanh_gaussian sac --max-workers 5
 conda run -n abm_new python experiments/experiment_dynamic_baseline_diagnostics.py --max-workers 5
@@ -103,7 +103,7 @@ For PPO action-distribution experiments, use the independent algorithm names exp
 
 For baseline experimentation, keep reusable pricing policies and search helpers under `src/baseline/`. Experiment scripts should orchestrate scenarios, outputs, and plots, but should not duplicate baseline policy implementations.
 
-For scenario-specific experiments, keep the canonical scenario list in `configs/scenario_policy_training_scenarios.json`. `experiment_scenario_policy_training.py` and `experiment_penalty_ablation.py` should read this JSON via `--scenario-file` rather than hard-coding scenario parameters.
+For scenario-specific experiments, keep the canonical scenario list in `configs/scenario_policy_training_scenarios.json`. `experiment_scenario_policy_training.py` and `experiment_penalty_ablation.py` should read this JSON via `--scenario-file` rather than hard-coding scenario parameters. `experiment_scenario_policy_training.py` computes baselines once per scenario, then parallelizes learned-policy training at the `scenario × algo` job level. For scarcity-penalty ablation, keep training to a single `--train-seed` by default and use multiple `--eval-seeds` for robustness unless the user explicitly asks for multiple independent training seeds.
 
 For the benchmark script, note that multi-process runs with `--max-workers > 1` may not show Stable-Baselines3's per-worker progress bars cleanly in the main terminal. In the current multi-algorithm benchmark, each worker computes baseline searches before launching RL training, so visible training progress may appear delayed even when training is running correctly.
 

@@ -104,7 +104,7 @@ def parse_args() -> argparse.Namespace:
         "--max-workers",
         type=int,
         default=1,
-        help="并行场景数；每个 worker 负责一个显式场景并依次训练该场景下的 algos",
+        help="并行 job 数；learned-policy 训练按 scenario × algo 粒度并行",
     )
     return parser.parse_args()
 
@@ -163,6 +163,15 @@ def scenario_fields(scenario: ScenarioSpec) -> dict[str, float | int | str]:
         "flexible_customer_share": float(scenario.flexible_customer_share),
         "lambda_day_mismatch_flex": float(scenario.lambda_day_mismatch_flex),
     }
+
+
+def scenario_from_payload(scenario_payload: dict[str, float | int | str]) -> ScenarioSpec:
+    return ScenarioSpec(
+        scenario_name=str(scenario_payload["scenario_name"]),
+        capacity=int(scenario_payload["capacity"]),
+        flexible_customer_share=float(scenario_payload["flexible_customer_share"]),
+        lambda_day_mismatch_flex=float(scenario_payload["lambda_day_mismatch_flex"]),
+    )
 
 
 def add_episode_metadata(
@@ -287,23 +296,13 @@ def plot_summary_metric(df: pd.DataFrame, metric: str, output_dir: Path) -> None
     plt.close()
 
 
-def run_scenario_job(
+def run_baseline_job(
     scenario_payload: dict[str, float | int | str],
-    algos: list[str],
-    train_seed: int | None,
     eval_seeds: list[int],
-    total_timesteps: int | None,
     price_grid: list[float],
     baseline_top_k: int,
-    no_progress_bar: bool,
-    run_prefix: str,
-) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
-    scenario = ScenarioSpec(
-        scenario_name=str(scenario_payload["scenario_name"]),
-        capacity=int(scenario_payload["capacity"]),
-        flexible_customer_share=float(scenario_payload["flexible_customer_share"]),
-        lambda_day_mismatch_flex=float(scenario_payload["lambda_day_mismatch_flex"]),
-    )
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], dict[str, Any]]:
+    scenario = scenario_from_payload(scenario_payload)
     historical_data = load_filtered_historical_data()
     eval_seeds = list(map(int, eval_seeds))
 
@@ -384,99 +383,126 @@ def run_scenario_job(
             )
         )
 
-        summary_rows: list[dict[str, Any]] = []
+        baseline_summary = {
+            **scenario_fields(scenario),
+            "static_grid_best_revenue": float(static_summary["episode_revenue_mean"]),
+            "inventory_protection_best_revenue": float(inventory_summary["episode_revenue_mean"]),
+            "best_static_prices": str(static_meta["best_static_prices"]),
+            "inventory_base_prices": str(inventory_meta["inventory_base_prices"]),
+            "inventory_scarcity_alpha": float(inventory_meta["inventory_scarcity_alpha"]),
+            "baseline_top_k": int(candidate_count),
+        }
 
-        for algo in algos:
-            runner = get_algorithm_runner(algo)
-            algo_config = runner["config"]
-            train_single_run_fn = runner["train_single_run"]
-            build_eval_env_fn = runner["build_eval_env"]
-            effective_train_seed = int(algo_config.seed if train_seed is None else train_seed)
-            effective_total_timesteps = int(
-                algo_config.total_timesteps if total_timesteps is None else total_timesteps
-            )
-            run_name = f"{run_prefix}_{scenario.scenario_name}_{algo}"
-            model, train_vec_env, run_dir = train_single_run_fn(
-                run_name=run_name,
+    return episode_rows, strategy_rows, baseline_summary
+
+
+def run_learned_job(
+    scenario_payload: dict[str, float | int | str],
+    algo: str,
+    train_seed: int | None,
+    eval_seeds: list[int],
+    total_timesteps: int | None,
+    no_progress_bar: bool,
+    run_prefix: str,
+) -> tuple[list[dict[str, Any]], dict[str, Any], dict[str, Any]]:
+    scenario = scenario_from_payload(scenario_payload)
+    historical_data = load_filtered_historical_data()
+    eval_seeds = list(map(int, eval_seeds))
+
+    with apply_abm_scenario(scenario):
+        runner = get_algorithm_runner(algo)
+        algo_config = runner["config"]
+        train_single_run_fn = runner["train_single_run"]
+        build_eval_env_fn = runner["build_eval_env"]
+        effective_train_seed = int(algo_config.seed if train_seed is None else train_seed)
+        effective_total_timesteps = int(
+            algo_config.total_timesteps if total_timesteps is None else total_timesteps
+        )
+        run_name = f"{run_prefix}_{scenario.scenario_name}_{algo}"
+        model, train_vec_env, run_dir = train_single_run_fn(
+            run_name=run_name,
+            historical_data=historical_data,
+            capacity=int(scenario.capacity),
+            train_seed=effective_train_seed,
+            total_timesteps=effective_total_timesteps,
+            progress_bar=not bool(no_progress_bar),
+            verbose=1,
+        )
+        learned_rows = [
+            evaluate_learned_policy(
+                model=model,
+                train_vec_env=train_vec_env,
+                build_eval_env_fn=build_eval_env_fn,
                 historical_data=historical_data,
-                capacity=int(scenario.capacity),
-                train_seed=effective_train_seed,
-                total_timesteps=effective_total_timesteps,
-                progress_bar=not bool(no_progress_bar),
-                verbose=1,
+                scenario=scenario,
+                eval_seed=seed,
             )
-            learned_rows = [
-                evaluate_learned_policy(
-                    model=model,
-                    train_vec_env=train_vec_env,
-                    build_eval_env_fn=build_eval_env_fn,
-                    historical_data=historical_data,
-                    scenario=scenario,
-                    eval_seed=seed,
-                )
-                for seed in eval_seeds
-            ]
-            learned_summary = summarize_episode_rows(learned_rows, int(scenario.capacity))
-            train_vec_env.close()
+            for seed in eval_seeds
+        ]
+        learned_summary = summarize_episode_rows(learned_rows, int(scenario.capacity))
+        train_vec_env.close()
 
-            strategy_rows.append(
-                make_strategy_row(
-                    scenario,
-                    strategy_name=str(algo),
-                    algo=str(algo),
-                    policy_type="learned",
-                    summary=learned_summary,
-                    extra={
-                        "train_seed": effective_train_seed,
-                        "eval_seed_count": int(len(eval_seeds)),
-                        "total_timesteps": effective_total_timesteps,
-                        "run_name": run_name,
-                        "run_dir": str(run_dir),
-                    },
-                )
-            )
-            episode_rows.extend(
-                add_episode_metadata(
-                    learned_rows,
-                    scenario=scenario,
-                    strategy_name=str(algo),
-                    algo=str(algo),
-                    policy_type="learned",
-                    eval_seeds=eval_seeds,
-                    train_seed=effective_train_seed,
-                    total_timesteps=effective_total_timesteps,
-                    run_name=run_name,
-                    run_dir=str(run_dir),
-                )
-            )
-            summary_rows.append(
-                {
-                    **scenario_fields(scenario),
-                    "algo": str(algo),
-                    "learned_revenue": float(learned_summary["episode_revenue_mean"]),
-                    "static_grid_best_revenue": float(static_summary["episode_revenue_mean"]),
-                    "inventory_protection_best_revenue": float(inventory_summary["episode_revenue_mean"]),
-                    "learned_vs_static_grid_best": float(
-                        learned_summary["episode_revenue_mean"]
-                        / max(1e-8, float(static_summary["episode_revenue_mean"]))
-                    ),
-                    "learned_vs_inventory_protection_best": float(
-                        learned_summary["episode_revenue_mean"]
-                        / max(1e-8, float(inventory_summary["episode_revenue_mean"]))
-                    ),
-                    "best_static_prices": str(static_meta["best_static_prices"]),
-                    "inventory_base_prices": str(inventory_meta["inventory_base_prices"]),
-                    "inventory_scarcity_alpha": float(inventory_meta["inventory_scarcity_alpha"]),
-                    "baseline_top_k": int(candidate_count),
-                    "train_seed": effective_train_seed,
-                    "eval_seed_count": int(len(eval_seeds)),
-                    "total_timesteps": effective_total_timesteps,
-                    "run_name": run_name,
-                    "run_dir": str(run_dir),
-                }
-            )
+    strategy_row = make_strategy_row(
+        scenario,
+        strategy_name=str(algo),
+        algo=str(algo),
+        policy_type="learned",
+        summary=learned_summary,
+        extra={
+            "train_seed": effective_train_seed,
+            "eval_seed_count": int(len(eval_seeds)),
+            "total_timesteps": effective_total_timesteps,
+            "run_name": run_name,
+            "run_dir": str(run_dir),
+        },
+    )
+    episode_rows = add_episode_metadata(
+        learned_rows,
+        scenario=scenario,
+        strategy_name=str(algo),
+        algo=str(algo),
+        policy_type="learned",
+        eval_seeds=eval_seeds,
+        train_seed=effective_train_seed,
+        total_timesteps=effective_total_timesteps,
+        run_name=run_name,
+        run_dir=str(run_dir),
+    )
+    learned_summary_row = {
+        **scenario_fields(scenario),
+        "algo": str(algo),
+        "learned_revenue": float(learned_summary["episode_revenue_mean"]),
+        "train_seed": effective_train_seed,
+        "eval_seed_count": int(len(eval_seeds)),
+        "total_timesteps": effective_total_timesteps,
+        "run_name": run_name,
+        "run_dir": str(run_dir),
+    }
+    return episode_rows, strategy_row, learned_summary_row
 
-    return episode_rows, strategy_rows, summary_rows
+
+def build_scenario_summary_row(learned_row: dict[str, Any], baseline_row: dict[str, Any]) -> dict[str, Any]:
+    learned_revenue = float(learned_row["learned_revenue"])
+    static_revenue = float(baseline_row["static_grid_best_revenue"])
+    inventory_revenue = float(baseline_row["inventory_protection_best_revenue"])
+    return {
+        **scenario_fields(scenario_from_payload(learned_row)),
+        "algo": str(learned_row["algo"]),
+        "learned_revenue": learned_revenue,
+        "static_grid_best_revenue": static_revenue,
+        "inventory_protection_best_revenue": inventory_revenue,
+        "learned_vs_static_grid_best": float(learned_revenue / max(1e-8, static_revenue)),
+        "learned_vs_inventory_protection_best": float(learned_revenue / max(1e-8, inventory_revenue)),
+        "best_static_prices": str(baseline_row["best_static_prices"]),
+        "inventory_base_prices": str(baseline_row["inventory_base_prices"]),
+        "inventory_scarcity_alpha": float(baseline_row["inventory_scarcity_alpha"]),
+        "baseline_top_k": int(baseline_row["baseline_top_k"]),
+        "train_seed": int(learned_row["train_seed"]),
+        "eval_seed_count": int(learned_row["eval_seed_count"]),
+        "total_timesteps": int(learned_row["total_timesteps"]),
+        "run_name": str(learned_row["run_name"]),
+        "run_dir": str(learned_row["run_dir"]),
+    }
 
 
 def main() -> None:
@@ -496,24 +522,38 @@ def main() -> None:
     strategy_results: list[dict[str, Any]] = []
     scenario_summaries: list[dict[str, Any]] = []
     scenario_payloads = [scenario_fields(scenario) for scenario in scenarios]
+    baseline_by_scenario: dict[str, dict[str, Any]] = {}
 
     if max_workers == 1:
         for scenario_payload in scenario_payloads:
-            episode_rows, strategy_rows, summary_rows = run_scenario_job(
+            episode_rows, strategy_rows, baseline_row = run_baseline_job(
                 scenario_payload=scenario_payload,
-                algos=algos,
-                train_seed=args.train_seed,
                 eval_seeds=eval_seeds,
-                total_timesteps=args.total_timesteps,
                 price_grid=price_grid,
                 baseline_top_k=int(args.baseline_top_k),
-                no_progress_bar=bool(args.no_progress_bar),
-                run_prefix=str(args.run_prefix),
             )
+            baseline_by_scenario[str(scenario_payload["scenario_name"])] = baseline_row
             episode_results.extend(episode_rows)
             strategy_results.extend(strategy_rows)
-            scenario_summaries.extend(summary_rows)
-            for summary in summary_rows:
+
+        for scenario_payload in scenario_payloads:
+            for algo in algos:
+                episode_rows, strategy_row, learned_row = run_learned_job(
+                    scenario_payload=scenario_payload,
+                    algo=str(algo),
+                    train_seed=args.train_seed,
+                    eval_seeds=eval_seeds,
+                    total_timesteps=args.total_timesteps,
+                    no_progress_bar=bool(args.no_progress_bar),
+                    run_prefix=str(args.run_prefix),
+                )
+                episode_results.extend(episode_rows)
+                strategy_results.append(strategy_row)
+                summary = build_scenario_summary_row(
+                    learned_row,
+                    baseline_by_scenario[str(scenario_payload["scenario_name"])],
+                )
+                scenario_summaries.append(summary)
                 print(
                     f"[{summary['scenario_name']} algo={summary['algo']}] "
                     f"learned={float(summary['learned_revenue']):.2f}, "
@@ -523,34 +563,56 @@ def main() -> None:
     else:
         spawn_context = mp.get_context("spawn")
         with ProcessPoolExecutor(max_workers=max_workers, mp_context=spawn_context) as executor:
-            future_to_scenario = {
+            future_to_baseline = {
                 executor.submit(
-                    run_scenario_job,
+                    run_baseline_job,
                     scenario_payload,
-                    algos,
-                    args.train_seed,
                     eval_seeds,
-                    args.total_timesteps,
                     price_grid,
                     int(args.baseline_top_k),
-                    bool(args.no_progress_bar),
-                    str(args.run_prefix),
                 ): str(scenario_payload["scenario_name"])
                 for scenario_payload in scenario_payloads
             }
-            for future in as_completed(future_to_scenario):
-                scenario_name = future_to_scenario[future]
-                episode_rows, strategy_rows, summary_rows = future.result()
+            for future in as_completed(future_to_baseline):
+                scenario_name = future_to_baseline[future]
+                episode_rows, strategy_rows, baseline_row = future.result()
+                baseline_by_scenario[scenario_name] = baseline_row
                 episode_results.extend(episode_rows)
                 strategy_results.extend(strategy_rows)
-                scenario_summaries.extend(summary_rows)
-                for summary in summary_rows:
-                    print(
-                        f"[{scenario_name} algo={summary['algo']}] "
-                        f"learned={float(summary['learned_revenue']):.2f}, "
-                        f"static={float(summary['static_grid_best_revenue']):.2f}, "
-                        f"inventory={float(summary['inventory_protection_best_revenue']):.2f}"
-                    )
+                print(
+                    f"[{scenario_name} baseline] "
+                    f"static={float(baseline_row['static_grid_best_revenue']):.2f}, "
+                    f"inventory={float(baseline_row['inventory_protection_best_revenue']):.2f}"
+                )
+
+        learned_jobs = [(scenario_payload, algo) for scenario_payload in scenario_payloads for algo in algos]
+        with ProcessPoolExecutor(max_workers=max_workers, mp_context=spawn_context) as executor:
+            future_to_job = {
+                executor.submit(
+                    run_learned_job,
+                    scenario_payload,
+                    str(algo),
+                    args.train_seed,
+                    eval_seeds,
+                    args.total_timesteps,
+                    bool(args.no_progress_bar),
+                    str(args.run_prefix),
+                ): (str(scenario_payload["scenario_name"]), str(algo))
+                for scenario_payload, algo in learned_jobs
+            }
+            for future in as_completed(future_to_job):
+                scenario_name, algo = future_to_job[future]
+                episode_rows, strategy_row, learned_row = future.result()
+                episode_results.extend(episode_rows)
+                strategy_results.append(strategy_row)
+                summary = build_scenario_summary_row(learned_row, baseline_by_scenario[scenario_name])
+                scenario_summaries.append(summary)
+                print(
+                    f"[{scenario_name} algo={algo}] "
+                    f"learned={float(summary['learned_revenue']):.2f}, "
+                    f"static={float(summary['static_grid_best_revenue']):.2f}, "
+                    f"inventory={float(summary['inventory_protection_best_revenue']):.2f}"
+                )
 
     episode_df = (
         pd.DataFrame(episode_results)
@@ -591,6 +653,8 @@ def main() -> None:
         "price_grid": price_grid,
         "baseline_top_k": int(args.baseline_top_k),
         "max_workers": max_workers,
+        "baseline_parallel_unit": "scenario",
+        "learned_parallel_unit": "scenario_x_algo",
         "episode_results_csv": str(episode_csv),
         "strategy_results_csv": str(strategy_csv),
         "scenario_summary_csv": str(summary_csv),
