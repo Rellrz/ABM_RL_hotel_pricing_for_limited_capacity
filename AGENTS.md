@@ -111,6 +111,8 @@ For the current `idea2` customer segmentation, treat `flexible_customer_share`, 
 
 The current three-state `idea2` demand calibration uses a quantile-compressed lead-time interpretation. `ideal_offset_probs` is calibrated from the relative frequencies of historical `lead_time` 0, 1, and 2 within that short-lead subset. WTP is not calibrated directly from those narrow lead-time buckets; instead, all valid City Hotel observations are sorted by `lead_time` and split according to the same three probabilities. The resulting three ADR distributions calibrate offset-specific WTP for near-, mid-, and far-horizon preference groups. WTP is bound to the customer's original `ideal_offset` and does not change if a `flex` customer shifts to another date.
 
+Arrival-rate calibration uses all valid City Hotel booking dates so the weekday/weekend arrival gap remains visible: `booking_date = arrival_date - lead_time`, with all lead times retained for this count. In the current three-day ABM, simulation day `t` exposes offset-specific demand in the selling window by combining those calibrated weekday/weekend arrival means with `ideal_offset_probs`: offset `0` uses day `t`, offset `1` uses day `t+1`, and offset `2` uses day `t+2`. Keep this distinction explicit: preprocessing uses booking-date counts to estimate the arrival scale, while the ABM uses the three offset buckets to expose demand in the rolling pricing window.
+
 Current research findings indicate two important cautions:
 
 - Reward penalties alone do not explain the extreme price structures observed in experiments; cross-day substitution in the ABM is currently the dominant driver of "low-price funnel + high-price blocking" behavior.

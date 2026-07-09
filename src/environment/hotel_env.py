@@ -155,6 +155,7 @@ class HotelEnvironment:
             "weekday_index": int(self._day_index(self.current_day)),
             "is_weekend": int(self._is_weekend(self.current_day)),
             "arrivals": int(demand["arrivals"]),
+            "arrivals_by_ideal_offset": demand["arrivals_by_ideal_offset"],
             "prices": prices.astype(float).tolist(),
             "reference_prices_before": reference_before.astype(float).tolist(),
             "requests_by_offset": requests.astype(int).tolist(),
@@ -196,6 +197,7 @@ class HotelEnvironment:
         next_state = self._build_state()
         info = {
             "arrivals": int(demand["arrivals"]),
+            "arrivals_by_ideal_offset": demand["arrivals_by_ideal_offset"],
             "prices": prices.astype(float).tolist(),
             "reference_prices_before": reference_before.astype(float).tolist(),
             "reference_prices_after_update": updated_reference.astype(float).tolist(),
