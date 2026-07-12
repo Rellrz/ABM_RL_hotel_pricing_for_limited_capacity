@@ -17,6 +17,7 @@ DEFAULT_INVENTORY_ALPHA = [0.0, 50.0, 100.0, 150.0, 200.0]
 
 METRIC_BASE_NAMES = [
     "episode_revenue",
+    "episode_raw_reward",
     "episode_reward",
     "episode_penalty",
     "episode_scarcity_penalty",

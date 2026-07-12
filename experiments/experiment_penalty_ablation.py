@@ -44,6 +44,7 @@ PLOT_METRICS = [
 ]
 SUMMARY_METRICS = [
     "episode_revenue",
+    "episode_raw_reward",
     "episode_reward",
     "episode_penalty",
     "episode_scarcity_penalty",

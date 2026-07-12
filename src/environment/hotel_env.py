@@ -18,6 +18,8 @@ class HotelEnvironment:
         random_seed: Optional[int] = None,
         capacity: Optional[int] = None,
         variable_cost_per_room: Optional[float] = None,
+        reward_scale: Optional[float] = None,
+        observation_mode: Optional[str] = None,
         scarcity_threshold_ratio: Optional[float] = None,
         scarcity_penalty_coef: Optional[float] = None,
         scarcity_penalty_weights: Optional[tuple[float, float, float] | list[float]] = None,
@@ -32,6 +34,12 @@ class HotelEnvironment:
         )
         if self.variable_cost_per_room < 0.0:
             raise ValueError("variable_cost_per_room 不能为负数。")
+        self.reward_scale = float(ENV_CONFIG.reward_scale if reward_scale is None else reward_scale)
+        if self.reward_scale <= 0.0:
+            raise ValueError("reward_scale 必须为正数。")
+        self.observation_mode = str(ENV_CONFIG.observation_mode if observation_mode is None else observation_mode)
+        if self.observation_mode not in {"calendar", "forecast"}:
+            raise ValueError("observation_mode 必须为 'calendar' 或 'forecast'。")
         self.scarcity_threshold_ratio = float(
             ENV_CONFIG.scarcity_threshold_ratio if scarcity_threshold_ratio is None else scarcity_threshold_ratio
         )
@@ -48,6 +56,7 @@ class HotelEnvironment:
         self.inventory_window = np.full(self.window_size, self.capacity, dtype=np.int32)
         self.reference_price_window = np.zeros(self.window_size, dtype=np.float64)
         self.total_reward = 0.0
+        self.total_raw_reward = 0.0
         self.total_revenue = 0.0
         self.daily_history: list[dict[str, Any]] = []
         self.reset()
@@ -73,24 +82,29 @@ class HotelEnvironment:
             dtype=np.float64,
         )
 
+    def _expected_arrivals_by_offset(self, base_day: int) -> np.ndarray:
+        return self.abm_model.get_expected_arrivals_by_ideal_offset(base_day).astype(np.float64)
+
     def _clip_prices(self, action: Any) -> np.ndarray:
         prices = np.asarray(action, dtype=np.float64).reshape(self.window_size)
         return np.clip(prices, self.price_min, self.price_max)
 
-    def _compute_reward_components(self, revenue: float, inventory_after: np.ndarray) -> tuple[float, float]:
+    def _compute_reward_components(self, revenue: float, inventory_after: np.ndarray) -> tuple[float, float, float]:
         remaining_ratio = inventory_after.astype(np.float64) / float(self.capacity)
         scarcity_gap = np.maximum(self.scarcity_threshold_ratio - remaining_ratio, 0.0)
         scarcity_penalty = float(
             self.scarcity_penalty_coef * np.sum(self.scarcity_penalty_weights * scarcity_gap**2)
         )
-        reward = float(revenue - scarcity_penalty)
-        return reward, scarcity_penalty
+        raw_reward = float(revenue - scarcity_penalty)
+        reward = float(raw_reward / self.reward_scale)
+        return reward, raw_reward, scarcity_penalty
 
     def _build_state(self) -> Dict[str, Any]:
         return {
             "weekday_index": self._day_index(self.current_day),
             "is_weekend": self._is_weekend(self.current_day),
             "is_weekday_by_offset": self._window_is_weekday(self.current_day),
+            "expected_arrivals_by_offset": self._expected_arrivals_by_offset(self.current_day),
             "inventory": self.inventory_window.astype(np.float64).copy(),
             "reference_prices": self.reference_price_window.astype(np.float64).copy(),
             "day_mod_7": int(self.current_day % 7),
@@ -99,11 +113,16 @@ class HotelEnvironment:
 
     def get_state_vector(self) -> np.ndarray:
         state = self._build_state()
+        demand_features = (
+            state["is_weekday_by_offset"]
+            if self.observation_mode == "calendar"
+            else state["expected_arrivals_by_offset"]
+        )
         return np.asarray(
             [
-                float(state["is_weekday_by_offset"][0]),
-                float(state["is_weekday_by_offset"][1]),
-                float(state["is_weekday_by_offset"][2]),
+                float(demand_features[0]),
+                float(demand_features[1]),
+                float(demand_features[2]),
                 float(state["inventory"][0]),
                 float(state["inventory"][1]),
                 float(state["inventory"][2]),
@@ -119,6 +138,7 @@ class HotelEnvironment:
         self.inventory_window = np.full(self.window_size, self.capacity, dtype=np.int32)
         self.reference_price_window = self._initial_reference_window(self.current_day)
         self.total_reward = 0.0
+        self.total_raw_reward = 0.0
         self.total_revenue = 0.0
         self.daily_history = []
         self.abm_model.reset()
@@ -146,7 +166,7 @@ class HotelEnvironment:
         variable_cost = float(np.sum(variable_cost_by_offset))
         revenue = float(np.sum(revenue_by_offset))
         remaining_ratio = inventory_after.astype(np.float64) / float(self.capacity)
-        reward, scarcity_penalty = self._compute_reward_components(
+        reward, raw_reward, scarcity_penalty = self._compute_reward_components(
             revenue=revenue,
             inventory_after=inventory_after,
         )
@@ -158,6 +178,7 @@ class HotelEnvironment:
         )
 
         self.total_reward += reward
+        self.total_raw_reward += raw_reward
         self.total_revenue += revenue
 
         history_row = {
@@ -182,6 +203,8 @@ class HotelEnvironment:
             "revenue": float(revenue),
             "scarcity_penalty": float(scarcity_penalty),
             "total_penalty": float(total_penalty),
+            "raw_reward": float(raw_reward),
+            "reward_scale": float(self.reward_scale),
             "reward": float(reward),
         }
         self.daily_history.append(history_row)
@@ -227,6 +250,8 @@ class HotelEnvironment:
             "revenue": float(revenue),
             "scarcity_penalty": float(scarcity_penalty),
             "total_penalty": float(total_penalty),
+            "raw_reward": float(raw_reward),
+            "reward_scale": float(self.reward_scale),
             "reward": float(reward),
         }
         return next_state, reward, done, info
@@ -241,6 +266,7 @@ class HotelEnvironment:
         return {
             "total_days": float(len(history)),
             "total_reward": float(self.total_reward),
+            "total_raw_reward": float(self.total_raw_reward),
             "total_revenue": float(self.total_revenue),
             "avg_daily_revenue": float(self.total_revenue / max(1, len(history))),
             "avg_acceptance_rate": float(accepted_total / max(1.0, arrivals_total)),

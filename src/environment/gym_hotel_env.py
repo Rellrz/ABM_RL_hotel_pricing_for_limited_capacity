@@ -20,6 +20,8 @@ class GymHotelPricingEnv(gym.Env):
         seed: Optional[int] = None,
         capacity: Optional[int] = None,
         variable_cost_per_room: Optional[float] = None,
+        reward_scale: Optional[float] = None,
+        observation_mode: Optional[str] = None,
         scarcity_threshold_ratio: Optional[float] = None,
         scarcity_penalty_coef: Optional[float] = None,
         scarcity_penalty_weights: Optional[tuple[float, float, float] | list[float]] = None,
@@ -28,6 +30,8 @@ class GymHotelPricingEnv(gym.Env):
         self.base_seed = seed
         self.capacity = capacity
         self.variable_cost_per_room = variable_cost_per_room
+        self.reward_scale = reward_scale
+        self.observation_mode = observation_mode
         self.scarcity_threshold_ratio = scarcity_threshold_ratio
         self.scarcity_penalty_coef = scarcity_penalty_coef
         self.scarcity_penalty_weights = scarcity_penalty_weights
@@ -36,6 +40,8 @@ class GymHotelPricingEnv(gym.Env):
             random_seed=seed,
             capacity=capacity,
             variable_cost_per_room=variable_cost_per_room,
+            reward_scale=reward_scale,
+            observation_mode=observation_mode,
             scarcity_threshold_ratio=scarcity_threshold_ratio,
             scarcity_penalty_coef=scarcity_penalty_coef,
             scarcity_penalty_weights=scarcity_penalty_weights,
@@ -63,6 +69,8 @@ class GymHotelPricingEnv(gym.Env):
                 random_seed=seed,
                 capacity=self.capacity,
                 variable_cost_per_room=self.variable_cost_per_room,
+                reward_scale=self.reward_scale,
+                observation_mode=self.observation_mode,
                 scarcity_threshold_ratio=self.scarcity_threshold_ratio,
                 scarcity_penalty_coef=self.scarcity_penalty_coef,
                 scarcity_penalty_weights=self.scarcity_penalty_weights,

@@ -52,6 +52,8 @@ class EnvConfig:
     price_min: float = 50.0
     price_max: float = 300.0
     variable_cost_per_room: float = 20
+    reward_scale: float = 1000.0
+    observation_mode: str = "calendar"  # calendar/forecast
     scarcity_threshold_ratio: float = 0.3
     scarcity_penalty_coef: float = 0.0
     scarcity_penalty_weights: tuple[float, float, float] = (0.0, 0.5, 1.0)
@@ -60,12 +62,12 @@ class EnvConfig:
 
 @dataclass
 class PPOConfig:
-    total_timesteps: int = 800000
+    total_timesteps: int = 800256
     learning_rate: float = 1e-4
-    n_steps: int = 128 #128
-    batch_size: int = 64 #64
+    n_steps: int = 512 #128
+    batch_size: int = 128 #64
     n_epochs: int = 10 #10
-    gamma: float = 0.99
+    gamma: float = 0.9
     gae_lambda: float = 0.95
     clip_range: float = 0.1
     ent_coef: float = 0.01
@@ -136,7 +138,7 @@ class TD3Config:
     seed: int = 42
     device: str = "auto"
     normalize_obs: bool = True
-    normalize_reward: bool = True
+    normalize_reward: bool = False
     reward_clip: float = 10.0
     obs_clip: float = 10.0
     save_name: str = "td3_idea2_hotel"
@@ -165,7 +167,7 @@ class TQCConfig:
     seed: int = 42
     device: str = "auto"
     normalize_obs: bool = True
-    normalize_reward: bool = True
+    normalize_reward: bool = False
     reward_clip: float = 10.0
     obs_clip: float = 10.0
     save_name: str = "tqc_idea2_hotel"
@@ -212,6 +214,10 @@ class ProjectConfig:
             raise ValueError("price_min 必须小于 price_max。")
         if self.env.variable_cost_per_room < 0.0:
             raise ValueError("variable_cost_per_room 不能为负数。")
+        if self.env.reward_scale <= 0.0:
+            raise ValueError("reward_scale 必须为正数。")
+        if self.env.observation_mode not in {"calendar", "forecast"}:
+            raise ValueError("observation_mode 必须为 'calendar' 或 'forecast'。")
         if not (0.0 < self.abm.reference_memory_alpha < 1.0):
             raise ValueError("reference_memory_alpha 必须位于 (0, 1) 内。")
         if self.env.capacity <= 0:

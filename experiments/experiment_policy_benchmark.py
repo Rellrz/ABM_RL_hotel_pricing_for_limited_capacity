@@ -38,6 +38,7 @@ DEFAULT_HEURISTIC_WEEKEND = [0.0, 20.0, 40.0]
 DEFAULT_HEURISTIC_DAY = [0.0, 20.0, 40.0]
 METRIC_BASE_NAMES = [
     "episode_revenue",
+    "episode_raw_reward",
     "episode_reward",
     "episode_penalty",
     "episode_acceptance_rate",

@@ -1,19 +1,19 @@
 [
   {
-    "scenario_name": "scenario_a_cap40_flex050_lam48",
-    "capacity": 40,
+    "scenario_name": "scenario_a_cap30_flex050_lam48",
+    "capacity": 30,
     "flexible_customer_share": 0.5,
     "lambda_day_mismatch_flex": 48.0
   },
   {
-    "scenario_name": "scenario_b_cap40_flex075_lam48",
-    "capacity": 40,
+    "scenario_name": "scenario_b_cap30_flex075_lam48",
+    "capacity": 30,
     "flexible_customer_share": 0.75,
     "lambda_day_mismatch_flex": 48.0
   },
   {
-    "scenario_name": "scenario_c_cap40_flex100_lam48",
-    "capacity": 40,
+    "scenario_name": "scenario_c_cap30_flex100_lam48",
+    "capacity": 30,
     "flexible_customer_share": 1.0,
     "lambda_day_mismatch_flex": 48.0
   }

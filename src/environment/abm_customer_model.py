@@ -63,6 +63,14 @@ class HotelABMModel:
             arrivals[offset] = int(self.rng.poisson(lam=lam))
         return arrivals
 
+    def get_expected_arrivals_by_ideal_offset(self, current_day: int) -> np.ndarray:
+        offset_probs = np.asarray(self.calibration.ideal_offset_probs, dtype=float).reshape(3)
+        expected_arrivals = np.zeros(3, dtype=float)
+        for offset in range(3):
+            stay_day = int(current_day + offset)
+            expected_arrivals[offset] = self._get_stay_day_arrival_mean(stay_day) * float(offset_probs[offset])
+        return expected_arrivals
+
     def _sample_ideal_offset(self) -> int:
         return int(self.rng.choice(np.arange(3), p=self.calibration.ideal_offset_probs))
 

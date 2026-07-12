@@ -29,7 +29,8 @@
 - **消费者为智能体**：每个消费者拥有理想入住日期与人群类型，其中商务人士通常坚持理想入住日，休闲人士会根据价格灵活改期；
 - **容量约束内生化**：单日房量存在硬上限，酒店可通过主动调价抑制低价值需求，避免关键入住日库存过早触顶；
 - **贡献利润口径**：每卖出一间房的即时收益按价格扣除单位可变成本后计算，而不是只记录总房费收入；
-- **完全无模型求解**：状态转移由仿真环境给出，策略优化仅依赖交互样本，当前实验重点比较 PPO-beta 与 SAC 等连续动作 Model-Free 强化学习算法。
+- **固定尺度训练奖励**：环境保留原始经济奖励 `raw_reward`，但返回给 RL 算法的训练奖励为 `raw_reward / reward_scale`，默认 `reward_scale=1000.0`；
+- **完全无模型求解**：状态转移由仿真环境给出，策略优化仅依赖交互样本，当前实验通过算法注册表比较 PPO 多种动作分布、SAC、TD3 与 TQC 等连续动作 Model-Free 强化学习算法。
 
 ### 符号总表
 
@@ -46,6 +47,9 @@
 | $S_t$ | 时刻 $t$ 的 RL 状态向量 |
 | $A_t$ | 时刻 $t$ 的动作向量，$A_t = [p_t^0,p_t^1,p_t^2]$ |
 | $R_t$ | 时刻 $t$ 的即时奖励 |
+| $R_t^{\text{raw}}$ | 原始经济奖励，即贡献利润减库存稀缺惩罚 |
+| $\tilde R_t$ | 返回给 RL 算法的缩放后训练奖励 |
+| $s_R$ | 固定奖励缩放尺度，当前默认 $s_R=1000$ |
 | $\gamma \in (0,1)$ | 折扣因子 |
 | $N_t$ | 时刻 $t$ 到达系统的消费者数量 |
 | $i=1,2,\dots,N_t$ | 消费者索引 |
@@ -70,7 +74,9 @@
 
 ## 二、非平稳周度需求过程
 
-本文不显式设定传统的解析需求函数 $D(p)$，而是将每日潜在客流视为由周度非平稳环境生成的随机样本。具体而言，工作日与周末分别对应不同的未知需求分布：
+本文不显式设定传统的解析需求函数 $D(p)$，而是将每日潜在客流视为由周度非平稳环境生成的随机样本。当前实现采用三天滚动窗口下的 offset 暴露需求：在决策日 $t$，系统分别为理想入住日 $t$、$t+1$、$t+2$ 采样潜在到达量。
+
+具体而言，工作日与周末分别对应不同的未知需求分布：
 
 $$
 N_t \sim F_{w_t}(\cdot),
@@ -82,7 +88,20 @@ F_{\text{weekend}}, & w_t \in \{6,7\}
 \end{cases}
 $$
 
-其中 $F_{\text{work}}$ 和 $F_{\text{weekend}}$ 不要求给出显式函数形式。实际训练时，环境仅需在每个时点根据对应日期类型采样客流样本即可，因此天然适配 Model-Free 强化学习。
+其中 $F_{\text{work}}$ 和 $F_{\text{weekend}}$ 不要求给出显式函数形式。实际训练时，环境根据每个目标入住日 $t+\tau$ 的日期类型取得到达均值，再乘以理想入住偏移概率 $\Pr(d^\ast=\tau)$，形成 offset 级别的泊松到达强度：
+
+$$
+N_t^\tau \sim \text{Poisson}\left(\lambda_{t+\tau}\Pr(d^\ast=\tau)\right),
+\qquad \tau \in \{0,1,2\}
+$$
+
+总到达量为：
+
+$$
+N_t=\sum_{\tau=0}^{2}N_t^\tau
+$$
+
+这一区分很重要：预处理阶段用全部有效 booking date 估计工作日/周末到达规模，而 ABM 在三天售卖窗口中用 `ideal_offset_probs` 把需求暴露到三个入住偏移上。因此，offset 0 使用入住日 $t$ 的日期类型，offset 1 使用入住日 $t+1$ 的日期类型，offset 2 使用入住日 $t+2$ 的日期类型。
 
 为了与数据集对齐，模型中的非平稳性主要来自两部分：
 
@@ -116,7 +135,7 @@ $$
 - **理想入住日期偏移** $d_i^\ast \in \{0,1,2\}$：表示其最希望入住的是当天、次日还是第三天；
 - **支付意愿** $WTP_i$：表示其对酒店产品的最高可接受价值水平。
 
-其中，$d_i^\ast$ 由历史样本中 `lead_time=0,1,2` 的相对比例校准得到；$WTP_i$ 不直接等同于某个订单的成交 ADR，而是使用全样本按 lead time 从小到大排序后的分段 ADR 分布进行间接校准。当前实现保留真实短订窗口的理想入住日期比例，但用“近期/中期/远期”三段 WTP 分布分别对应 $d_i^\ast=0,1,2$，从而表达越接近入住日的需求通常具有更高库存机会成本。$g_i$ 对应的人群占比 $\rho_{\text{flex}}$ 更适合作为结构化实验参数进行敏感性分析。
+其中，$d_i^\ast$ 由历史样本中 `lead_time=0,1,2` 的相对比例校准得到；$WTP_i$ 不直接等同于某个订单的成交 ADR，而是使用全样本按 lead time 从小到大排序后的分段 ADR 分布进行间接校准。当前实现保留真实短订窗口的理想入住日期比例，但用“近期/中期/远期”三段 WTP 分布分别对应 $d_i^\ast=0,1,2$。WTP 绑定在消费者原始理想入住偏移上，即使 flex 顾客最终改住其他日期，其 WTP 也不会随实际入住日改变。$g_i$ 对应的人群占比 $\rho_{\text{flex}}$ 更适合作为结构化实验参数进行敏感性分析。
 
 ### 3.2 动态参考价格
 
@@ -362,40 +381,114 @@ $$
 
 ### 5.1 状态空间 $S_t$
 
-为了保证环境对 RL 代理完全可观测，同时避免引入显式需求函数参数，本文将状态定义为：
+为了保证环境对 RL 代理完全可观测，同时便于比较不同信息设定，当前工程实现将状态定义为固定 9 维向量。前三维由 `EnvConfig.observation_mode` 控制。
+
+默认 `calendar` 模式使用未来三个入住日的工作日指示器：
 
 $$
-S_t =
+S_t^{\text{calendar}} =
 \bigl[
-w_t,\;
-\mathbb{I}_{\text{weekend}}(w_t),\;
+\mathbb{I}_{\text{weekday}}(t),\;
+\mathbb{I}_{\text{weekday}}(t+1),\;
+\mathbb{I}_{\text{weekday}}(t+2),\;
 x_t,\;
 x_{t+1},\;
 x_{t+2},\;
 \bar p_t,\;
 \bar p_{t+1},\;
-\bar p_{t+2},\;
-t \pmod{T}
+\bar p_{t+2}
 \bigr]
 $$
+
+也就是代码中的顺序：
+
+```text
+[
+  is_weekday_day0,
+  is_weekday_day1,
+  is_weekday_day2,
+  inventory_day0,
+  inventory_day1,
+  inventory_day2,
+  reference_price_day0,
+  reference_price_day1,
+  reference_price_day2,
+]
+```
+
+新增 `forecast` 模式使用事前期望到达量替换前三个日期类型特征：
+
+$$
+S_t^{\text{forecast}} =
+\bigl[
+\mathbb{E}[N_t^0],\;
+\mathbb{E}[N_t^1],\;
+\mathbb{E}[N_t^2],\;
+x_t,\;
+x_{t+1},\;
+x_{t+2},\;
+\bar p_t,\;
+\bar p_{t+1},\;
+\bar p_{t+2}
+\bigr]
+$$
+
+其中：
+
+$$
+\mathbb{E}[N_t^\tau]
+=
+\lambda_{t+\tau}\Pr(d^\ast=\tau),
+\qquad \tau \in \{0,1,2\}
+$$
+
+代码顺序为：
+
+```text
+[
+  expected_arrivals_day0,
+  expected_arrivals_day1,
+  expected_arrivals_day2,
+  inventory_day0,
+  inventory_day1,
+  inventory_day2,
+  reference_price_day0,
+  reference_price_day1,
+  reference_price_day2,
+]
+```
+
+这里的 `expected_arrivals_day*` 只使用校准得到的工作日/周末到达均值与 `ideal_offset_probs`，在每日泊松到达抽样之前计算。因此它表示外生需求预测先验，而不是当天真实到达量或价格响应后的真实成交量。
 
 这是一个 9 维状态向量，其设计原则是：**只保留滚动 3 天联合定价真正必需的信息，不把不可观测需求参数和消费者个体历史直接塞进状态中。**
 
 这 9 个维度可以分为三类：
 
-- **时间特征**：$w_t$、$\mathbb{I}_{\text{weekend}}(w_t)$ 和 $t \pmod{T}$，用于表达周度非平稳性；
+- **需求/日期特征**：`calendar` 模式下为未来 3 个入住日各自的工作日指示器；`forecast` 模式下为未来 3 个入住日按 offset 暴露的事前期望到达量；
 - **库存特征**：$x_t,x_{t+1},x_{t+2}$，用于表达未来 3 天的容量紧张程度；
 - **心理价格特征**：$\bar p_t,\bar p_{t+1},\bar p_{t+2}$，用于表达当前报价相对消费者价格记忆的位置。
 
+当前实现内部仍会记录 `weekday_index`、`is_weekend`、`day_mod_7`、绝对 `day` 和 `expected_arrivals_by_offset` 等诊断字段。策略或 baseline 若直接读取 observation，应使用 `obs[0:3]` 读取当前模式下的需求/日期特征，`obs[3:6]` 读取库存，`obs[6:9]` 读取参考价格。
+
 ### 5.2 动作空间 $A_t$
 
-酒店在时刻 $t$ 的动作是同时决定未来 3 天的价格：
+酒店在时刻 $t$ 的经济动作是同时决定未来 3 天的价格：
 
 $$
 A_t = [p_t^0,\; p_t^1,\; p_t^2] \in [p_{\min}, p_{\max}]^3
 $$
 
 这一定义与酒店实际运营逻辑相符：收益经理并不是每天只给当天定价，而是必须面向一个有限的短期预售窗口联合调整价格。
+
+在 Gymnasium 环境中，算法实际输出的是归一化连续动作 $a_t \in [-1,1]^3$。环境再通过线性映射把它转换到价格区间 $[p_{\min},p_{\max}]^3$：
+
+$$
+p_t^\tau
+=
+\frac{p_{\min}+p_{\max}}{2}
++
+\frac{p_{\max}-p_{\min}}{2}a_t^\tau
+$$
 
 ### 5.3 即时奖励函数 $R_t$
 
@@ -407,16 +500,16 @@ $$
 \sum_{\tau=0}^{2} (p_t^\tau - c_v)\cdot \Delta x_{t+\tau}^{\text{act}}
 $$
 
-若不引入库存惩罚，则即时奖励为：
+若不引入库存惩罚，则原始经济奖励为：
 
 $$
-R_t = \Pi_t
+R_t^{\text{raw}} = \Pi_t
 $$
 
 若需要显式强调避免过早满房，可采用加权库存稀缺惩罚：
 
 $$
-R_t
+R_t^{\text{raw}}
 =
 \Pi_t
 -
@@ -439,7 +532,22 @@ $$
 - $\eta$ 控制惩罚强度；
 - $\omega_\tau$ 允许对不同入住偏移设置不同保护强度，当前研究更关注保护未来日期的库存空间，因此可取 $\omega_0=0,\omega_1>0,\omega_2>0$。
 
-这一奖励设计的目的不是强行禁止满房，而是让 RL 代理学会：**当过早卖满会损失未来高价值需求或 flex 跨日调节空间时，适度保留容量可能比即时卖满更优。**在实证比较中，应同时报告贡献利润、惩罚项、满房率和拒单率，避免把“收益最大化”和“库存拥堵控制”混在一个指标里解释。
+为了降低训练数值尺度，环境返回给 RL 算法的奖励不是原始经济奖励，而是固定缩放后的训练奖励：
+
+$$
+\tilde R_t = \frac{R_t^{\text{raw}}}{s_R}
+$$
+
+当前默认 $s_R=1000$，对应 `EnvConfig.reward_scale=1000.0`。日志中同时保留：
+
+- `reward`：缩放后的训练奖励 $\tilde R_t$；
+- `raw_reward`：未缩放的经济奖励 $R_t^{\text{raw}}$；
+- `revenue`：贡献利润 $\Pi_t$；
+- `gross_revenue`：未扣可变成本的房费收入；
+- `variable_cost`：可变成本；
+- `scarcity_penalty` 与 `total_penalty`：库存稀缺惩罚项。
+
+这一奖励设计的目的不是强行禁止满房，而是让 RL 代理学会：**当过早卖满会损失未来高价值需求或 flex 跨日调节空间时，适度保留容量可能比即时卖满更优。**在当前主线实验中，`scarcity_penalty_coef=0.0` 可作为无显式库存惩罚的纯贡献利润训练设定；满房率、拒单率和库存水平更多作为策略解释指标，而不是必须写入 reward。
 
 ## 六、Model-Free 强化学习优化目标
 
@@ -462,16 +570,20 @@ $$
 =
 \mathbb{E}_{\tau \sim \pi,\; \mathcal{T}}
 \left[
-\sum_{t=0}^{H} \gamma^t R_t
+\sum_{t=0}^{H} \gamma^t \tilde R_t
 \right]
 $$
 
-其中 $H$ 为单个 episode 的长度。该目标完全通过轨迹样本
-$\{(S_t,A_t,R_t,S_{t+1})\}$ 进行估计和优化，因此天然适配连续动作强化学习算法。当前工程实现重点比较：
+其中 $H$ 为单个 episode 的长度。工程训练时优化的是缩放后的 $\tilde R_t$，但由于 $s_R$ 为正常数，它不改变原始目标的最优策略排序。该目标完全通过轨迹样本
+$\{(S_t,A_t,\tilde R_t,S_{t+1})\}$ 进行估计和优化，因此天然适配连续动作强化学习算法。当前工程实现重点比较：
 
-- **PPO-beta**：使用 Beta 分布生成有界连续价格动作，适合诊断边界动作与极端价格倾向；
-- **SAC**：使用 off-policy actor-critic 框架处理连续动作，是当前实验中表现最稳定的主算法；
+- **PPO 系列**：包括 `ppo_standard`、`ppo_tanh_gaussian`、`ppo_truncated_gaussian`、`ppo_scale_adjusted_truncated_gaussian` 和 `ppo_beta`，用于比较不同有界连续动作分布对价格边界行为的影响；
+- **SAC**：使用 off-policy actor-critic 框架处理连续动作，是当前实验中的主算法之一；
+- **TD3**：确定性 off-policy 连续控制算法，用于和 SAC 对比探索噪声与确定性策略的差异；
+- **TQC**：来自 `sb3-contrib` 的分位数 critic 算法，用于对 off-policy 连续控制做鲁棒性比较；
 - **静态价格、工作日/周末静态价格、库存保护启发式策略**：作为强基线，用于判断场景是否真的存在动态定价价值。
+
+当前默认配置中，PPO 保留在线 reward normalization；SAC、TD3 和 TQC 默认关闭在线 reward normalization，主要依赖固定 reward scaling，避免 replay buffer 中的 reward 标尺随训练过程漂移。
 
 本文不把 Q-learning、SARSA 或 DQN 作为主比较对象，因为它们需要额外离散化连续价格动作，容易把算法能力和离散化误差混在一起。
 
@@ -494,21 +606,23 @@ y_{i,t+\tau}^{\text{req}} = 1 \iff \tau\ \text{为消费者在可接受日期中
 \text{容量约束：} &
 \Delta x_{t+\tau}^{\text{act}} \le x_{t+\tau},\quad
 x_{t+\tau}^{+} = x_{t+\tau} - \Delta x_{t+\tau}^{\text{act}} \\[8pt]
-\text{奖励函数：} &
-R_t = \sum_{\tau=0}^{2} (p_t^\tau-c_v) \Delta x_{t+\tau}^{\text{act}}
+\text{原始奖励函数：} &
+R_t^{\text{raw}} = \sum_{\tau=0}^{2} (p_t^\tau-c_v) \Delta x_{t+\tau}^{\text{act}}
 - \eta \sum_{\tau=0}^{2}\omega_\tau\left[\max\left(\theta-\frac{x_{t+\tau}^{+}}{C},0\right)\right]^2 \\[8pt]
+\text{训练奖励：} &
+\tilde R_t = R_t^{\text{raw}} / s_R,\quad s_R>0 \\[8pt]
 \text{优化目标：} &
-\max_{\pi} \mathbb{E}\left[\sum_{t=0}^{H} \gamma^t R_t\right]
+\max_{\pi} \mathbb{E}\left[\sum_{t=0}^{H} \gamma^t \tilde R_t\right]
 \end{cases}
 $$
 
 ## 八、数据校准与参数识别
 
-为了使模型尽可能贴近 `hotel_bookings.csv` 所描述的真实市场环境，当前实现使用 `City Hotel` 子样本，并保留正 ADR 样本进行经验校准。训练与评估的时间划分由 `configs/config.py` 中的 `DataConfig` 显式控制；若实验目标是时间泛化，可使用 2016 年训练、2017 年评估；若实验目标是同分布策略比较，则应在实验说明中明确标注。
+为了使模型尽可能贴近 `hotel_bookings.csv` 所描述的真实市场环境，当前实现使用 `City Hotel` 子样本，并保留正 ADR 样本进行经验校准。当前代码路径中的 `load_filtered_historical_data()` 使用全量有效样本，不按年份切分训练集和评估集；因此现阶段实验应表述为“在同一历史校准环境下进行策略比较”，而不是时间外推泛化实验。`DataConfig` 中仍保留 `train_years` 与 `eval_years` 字段，作为未来恢复时间泛化实验时的配置入口。
 
 其中，可由数据直接拟合或提取的参数主要包括：
 
-- **周度需求环境参数**：工作日与周末的到达人数经验分布，即 $F_{\text{work}}$ 与 $F_{\text{weekend}}$；
+- **周度需求环境参数**：使用所有有效 booking date 估计工作日与周末 booking 到达均值，即 $F_{\text{work}}$ 与 $F_{\text{weekend}}$ 的到达规模；
 - **人群混合参数**：灵活型消费者占比 $\rho_{\text{flex}}$，可按场景假设设定，或在有足够业务先验时做分层校准；
 - **理想入住日期分布**：消费者理想入住日期偏移 $d_i^\ast \in \{0,1,2\}$ 使用历史 `lead_time=0,1,2` 的相对比例；
 - **价格边界参数**：动作空间中的 $p_{\min}$、$p_{\max}$；
@@ -519,7 +633,7 @@ $$
 
 与此相对，$\lambda_d^{\text{biz}}$、$\lambda_d^{\text{flex}}$、$\lambda_p$、$\alpha$、$\eta$、$\theta$ 和 $\omega_\tau$ 等行为与控制参数更适合采用**结构化设定 + 敏感性分析**的方式确定，而不宜声称由订单数据直接识别。
 
-在当前工程实现中，人群与库存保护参数可分别映射为配置项 `flexible_customer_share`、`lambda_day_mismatch_biz`、`lambda_day_mismatch_flex`、`variable_cost_per_room`、`scarcity_penalty_coef` 和 `scarcity_penalty_weights`，便于直接在 `configs/config.py` 或实验脚本中做场景覆盖。
+在当前工程实现中，人群、状态、收益与库存保护参数可分别映射为配置项 `flexible_customer_share`、`lambda_day_mismatch_biz`、`lambda_day_mismatch_flex`、`observation_mode`、`variable_cost_per_room`、`reward_scale`、`scarcity_penalty_coef` 和 `scarcity_penalty_weights`，便于直接在 `configs/config.py` 或实验脚本中做场景覆盖。
 
 ## 九、模型核心创新点
 
@@ -529,16 +643,16 @@ $$
 4. **参考价格心理效应嵌入动态定价**：消费者是否预订不只取决于绝对价格，还取决于“当前价格相对参考价格的位置”，从而使酒店能够通过心理价格机制主动平滑需求。
 5. **显式区分刚性与灵活需求**：通过商务型与灵活型两类消费者的混合设定，将“是否可改期”作为环境结构参数，而不是让所有人都具备完全相同的跨日替代能力。
 6. **满房后的消费者响应具有异质性**：biz 顾客在首选日期满房时被拒，flex 顾客可以在其他有库存且效用非负的日期中重新选择，使容量约束直接影响需求再分配。
-7. **显式处理周度非平稳性**：模型将工作日/周末差异直接写入状态，使 RL 策略能够自动学习不同日期环境下的差异化定价。
+7. **显式处理周度非平稳性**：模型可在 `calendar` 模式下将工作日/周末差异写入状态，也可在 `forecast` 模式下将校准得到的事前期望到达量写入状态，用于区分弱日历先验和外生需求预测先验下的策略表现。
 8. **为 AE 扩展预留接口**：本模型已经建立了“非平稳客流 + 滚动 3 天窗口 + 多智能体行为 + 库存滚动更新”的完整框架，后续若重新引入 AE 机制，只需在消费者效用与状态表征层进一步扩展，而无需重构整个环境。
 
 ## 十、算法落地简化思路
 
 1. **环境初始化**：给定当前星期、未来 3 天剩余房量和 3 个参考价格基准；
-2. **酒店定价**：RL 代理输出动作 $A_t = [p_t^0,p_t^1,p_t^2]$；
+2. **酒店定价**：RL 代理输出归一化动作 $a_t \in [-1,1]^3$，环境映射为价格 $A_t = [p_t^0,p_t^1,p_t^2]$；
 3. **消费者到达与决策**：采样 $N_t$ 个消费者，对每个消费者生成 $(g_i, d_i^\ast, WTP_i, \varepsilon_{i,t}^\tau)$，并根据效用函数选择是否下单以及预订哪一天；
 4. **库存与参考价格更新**：结算 $\Delta x^{\text{req}}$ 和 $\Delta x^{\text{act}}$，更新剩余房量与参考价格；
-5. **奖励计算与策略迭代**：计算 $R_t$，将轨迹样本送入 PPO-beta 或 SAC 等连续动作算法更新策略；
+5. **奖励计算与策略迭代**：计算 `raw_reward` 与缩放后 `reward`，将轨迹样本送入 PPO、SAC、TD3 或 TQC 等连续动作算法更新策略；
 6. **窗口滚动**：进入下一天，形成新的 3 天状态窗口并重复上述流程。
 
 这使得整个模型可以作为一个**最小可运行的行为型酒店动态定价环境**。在工程上，它比直接构造 AE-休眠系统更容易落地；在研究上，它又保留了后续向更复杂行为机制扩展的统一接口。
